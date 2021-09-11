@@ -1,14 +1,16 @@
 import taichi as ti
 import numpy as np
 from utils import *
+import time
 
-ti.init(ti.cpu, kernel_profiler=True)
+# ti.init(ti.cpu, kernel_profiler=True)
+ti.init(ti.cpu)
 
 gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
 
-nely = 20
+nely = 10
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -35,13 +37,12 @@ K_freedof = ti.field(ti.f32, shape=(n_free_dof, n_free_dof))
 F_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof))
 U_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof))
 
+dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
+
 # for cg
 r = ti.field(dtype=ti.f32, shape=(n_free_dof))
 p = ti.field(dtype=ti.f32, shape=(n_free_dof))
 Ap = ti.field(dtype=ti.f32, shape=(n_free_dof))
-
-
-dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
 
 @ti.kernel
 def display_sampling():
@@ -76,7 +77,7 @@ def clamp(x: ti.template(), ely, elx):
     return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
 
 
-@ti.func
+@ti.kernel
 def derivative_filter():
     rmin = 1.2
     for ely, elx in ti.ndrange(nely, nelx):
@@ -93,8 +94,8 @@ def derivative_filter():
         dc[ely, elx] = dc[ely, elx] / weight
 
 
-@ti.func
-def solve_finite_element():
+@ti.kernel
+def assemble_K():
     for I in ti.grouped(K):
         K[I] = 0.
 
@@ -111,37 +112,45 @@ def solve_finite_element():
     for i, j in ti.ndrange(n_free_dof,n_free_dof):
         K_freedof[i, j] = K[free_dofs_vec[i], free_dofs_vec[j]]
 
-    # 3. Solve linear system
-    conjungate_gradient()
-
-    # 4. mapping U_freedof backward to U
+@ti.kernel
+def backward_map_U():
+    # mapping U_freedof backward to U
     for i in range(n_free_dof):
         idx = free_dofs_vec[i]
         U[idx] = U_freedof[i]
 
+@ti.func
+def cg_compute_Ap(A: ti.template(), p:ti.template()):
+    for I in range(n_free_dof):
+        Ap[I] = 0.
+
+    for i in range(n_free_dof):
+        for j in range(n_free_dof):
+            Ap[i] += A[i, j] * p[j]
+    # for i, j in ti.ndrange((n_free_dof, n_free_dof)): # error
 
 @ti.func
+def reduce(r: ti.template()):
+    result = 0.
+    for I in range(r.shape[0]):
+        result += r[I] * r[I]  # rsnew = r' * r
+    return result
+
+@ti.kernel
 def conjungate_gradient():
     A, x, b = ti.static(K_freedof, U_freedof, F_freedof) # variable alias
 
     # init
     for I in ti.grouped(b):
         x[I] = 0.
-        r[I] = b[I] # r = b - A * x = b
+        r[I] = b[I]  # r = b - A * x = b
         p[I] = r[I]
 
-    rsold = 0.
-    for I in ti.grouped(r): # r.dot(r)
-        rsold += r[I] * r[I]
+    rsold = reduce(r)
 
+    # cg iteration
     for iter in range(n_free_dof + 50):
-        for I in range(n_free_dof):
-            Ap[I] = 0.
-
-        for i in range(n_free_dof):
-            for j in range(n_free_dof):
-                Ap[i] += A[i, j] * p[j]
-        # for i, j in ti.ndrange((n_free_dof, n_free_dof)): # error
+        cg_compute_Ap(A, p)
 
         beta = 0.
         for I in range(n_free_dof):
@@ -152,9 +161,7 @@ def conjungate_gradient():
             x[I] += alpha * p[I]  # x = x + alpha * Ap
             r[I] -= alpha * Ap[I] # r = r - alpha * Ap
 
-        rsnew = 0.
-        for I in range(n_free_dof):
-            rsnew += r[I] * r[I] # rsnew = r' * r
+        rsnew = reduce(r)
 
         if ti.sqrt(rsnew) < 1e-10:
             break
@@ -181,10 +188,9 @@ def get_Ke():
     Ke.from_numpy(Ke_)
 
 
-@ti.kernel
-def topo_opt():
-    solve_finite_element()
 
+@ti.kernel
+def get_dc():
     compliance = 0.
     for ely, elx in ti.ndrange(nely, nelx):
         n1 = (nely + 1) * elx + ely + 1
@@ -200,12 +206,10 @@ def topo_opt():
         for i in ti.static(range(8)):
             d += Ue[i] * t[i] # d = Ue' * Ke * Ue
 
-
         compliance += rho[ely, elx]**simp_penal * d
 
         dc[ely, elx] = -simp_penal * rho[ely, elx]**(simp_penal -1) * d
 
-    derivative_filter()
 
 @ti.kernel
 def initialize():
@@ -225,9 +229,7 @@ if __name__ == '__main__':
 
     gui = ti.GUI('Taichi TopoOpt', res=(gui_x, gui_y))
     free_dofs_vec.from_numpy(free_dofs)
-
     initialize()
-
     get_Ke()
 
     # print(K_freedof)
@@ -236,14 +238,18 @@ if __name__ == '__main__':
     # print(dc)
 
     change = 1.
+    print(f"total dof = {ndof}")
     while gui.running:
         x_old = rho.to_numpy()
         iter = 0
         while change > 0.01:
             iter += 1
 
-
-            topo_opt()
+            assemble_K()
+            conjungate_gradient()
+            backward_map_U()
+            get_dc()
+            derivative_filter()
 
             x = OC()
             volume = sum(sum(x)) / (nely * nelx)
@@ -258,6 +264,8 @@ if __name__ == '__main__':
 
             gui.set_image(display)
             gui.show()
+
+            # ti.print_kernel_profile_info()
 
 
 
