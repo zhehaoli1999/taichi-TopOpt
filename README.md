@@ -16,5 +16,11 @@ run [main.py](./main.py)
 4. More...
 
 ## Reference
+<<<<<<< HEAD
 1. [A 99 line topology optimization code written in MATLAB](https://www.topopt.mek.dtu.dk/apps-and-software/a-99-line-topology-optimization-code-written-in-matlab)
 2. [cg_possion.py](https://github.com/houkensjtu/taichi-experiment/blob/master/homework-1/cg_possion.py)
+=======
+[A 99 line topology optimization code written in MATLAB](https://www.topopt.mek.dtu.dk/apps-and-software/a-99-line-topology-optimization-code-written-in-matlab)
+
+[cg_possion.py](https://github.com/houkensjtu/taichi-experiment/blob/master/homework-1/cg_possion.py)
+>>>>>>> 40ca64cf77c7ceee2f3edd509e9d90e68a0d6802
