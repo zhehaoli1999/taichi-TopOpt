@@ -8,7 +8,7 @@ gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
 
-nely = 30
+nely = 20
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -50,7 +50,7 @@ def display_sampling():
     for i, j in ti.ndrange(gui_x, gui_y):
         elx = i // s_x
         ely = j // s_y
-        display[i, j] = rho[ely, elx] # Note:  transpose rho here
+        display[i, gui_y - j] = 1. - rho[ely, elx] # Note:  transpose rho here
 
 # Optimality Criteria
 def OC():
@@ -72,8 +72,26 @@ def OC():
     return xnew
 
 @ti.func
-def filter():
-    pass
+def clamp(x: ti.template(), ely, elx):
+    return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
+
+
+@ti.func
+def derivative_filter():
+    rmin = 1.2
+    for ely, elx in ti.ndrange(nely, nelx):
+        dc[ely, elx] = rmin * clamp(rho, ely, elx) * dc[ely, elx] +  \
+                       (rmin - 1) * (clamp(rho, ely-1, elx) * clamp(dc, ely-1, elx) + \
+                                    clamp(rho, ely+1, elx) * clamp(dc, ely+1, elx) + \
+                                    clamp(rho, ely, elx-1) * clamp(dc, ely, elx-1) + \
+                                    clamp(rho, ely, elx+1) * clamp(dc, ely, elx+1))
+
+        weight = rmin * clamp(rho, ely, elx)  + \
+                (rmin - 1) * (clamp(rho, ely-1, elx) + clamp(rho, ely+1, elx) + \
+                                clamp(rho, ely, elx-1) + clamp(rho, ely, elx+1))
+
+        dc[ely, elx] = dc[ely, elx] / weight
+
 
 @ti.func
 def solve_finite_element():
@@ -89,28 +107,18 @@ def solve_finite_element():
         for i, j in ti.static(ti.ndrange(8, 8)):
             K[edof[i], edof[j]] += rho[ely, elx]**simp_penal * Ke[i, j]
 
-    # Get K_freedof
+    # 2. Get K_freedof
     for i, j in ti.ndrange(n_free_dof,n_free_dof):
         K_freedof[i, j] = K[free_dofs_vec[i], free_dofs_vec[j]]
 
+    # 3. Solve linear system
     conjungate_gradient()
 
-    # mapping backward
+    # 4. mapping U_freedof backward to U
     for i in range(n_free_dof):
         idx = free_dofs_vec[i]
         U[idx] = U_freedof[i]
 
-
-# @ti.func
-# def GS_solver(max_iter): # Guass-Seidel Solver: May not converge
-#     for iter in range(max_iter):
-#         for i in range(n_free_dof):
-#             sigma = 0.
-#             for j in range(n_free_dof):
-#                 if j != i :
-#                     sigma += K_freedof[i,j] * U_freedof[j]
-#             if K_freedof[i, i] != 0.:
-#                 U_freedof[i] = (F_freedof[i] - sigma) / K_freedof[i, i]
 
 @ti.func
 def conjungate_gradient():
@@ -156,28 +164,6 @@ def conjungate_gradient():
 
         rsold = rsnew
 
-
-    # scalar_minus(b, temp, r)
-    # scalar_copy(r, p)  # p = r
-    # rsold = scalar_dot(r, r)
-    # for i in range(free_dofs):
-    #     scalar_mat_mul_vec(A, p, temp) # Ap = A @ p
-    #     scalar_copy(temp, Ap) # Ap = temp
-    #     alpha = rsold / scalar_dot(Ap, p) # alpha = rsold / p.dot(Ap)
-    #     scalar_mul_const(p, alpha, temp)
-    #     scalar_add(x, temp, x)           # x = x + alpha * p
-    #     scalar_mul_const(Ap, alpha, temp)
-    #     scalar_minus(r, temp, r)         # r = r - alpha * Ap
-    #
-    #     rsnew = scalar_dot(r, r)
-    #     if ti.sqrt(rsnew) < 1e-10:
-    #         break
-    #
-    #     scalar_mul_const(p, (rsnew / rsold) , temp)
-    #     scalar_add(r, temp, p) # p = r + (rsnew / rsold) * p
-    #     rsold = rsnew
-
-
 def get_Ke():
     k = np.array(
         [1 / 2 - nu / 6, 1 / 8 + nu / 8, -1 / 4 - nu / 12, -1 / 8 + 3 * nu / 8, -1 / 4 + nu / 12, -1 / 8 - nu / 8,
@@ -219,6 +205,7 @@ def topo_opt():
 
         dc[ely, elx] = -simp_penal * rho[ely, elx]**(simp_penal -1) * d
 
+    derivative_filter()
 
 @ti.kernel
 def initialize():
@@ -254,6 +241,8 @@ if __name__ == '__main__':
         iter = 0
         while change > 0.01:
             iter += 1
+
+
             topo_opt()
 
             x = OC()
