@@ -40,30 +40,32 @@ U_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof))
 dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
 
 # for cg
-r = ti.field(dtype=ti.f32, shape=(n_free_dof))
-p = ti.field(dtype=ti.f32, shape=(n_free_dof))
-Ap = ti.field(dtype=ti.f32, shape=(n_free_dof))
+# r = ti.field(dtype=ti.f32, shape=(n_free_dof))
+# p = ti.field(dtype=ti.f32, shape=(n_free_dof))
+# Ap = ti.field(dtype=ti.f32, shape=(n_free_dof))
 
 # for mgpcg
-# n_mg_levels = 4
-# pre_and_post_smoothing = 2
-# bottom_smoothing = 50
-# real = ti.f32
-# r = [ti.field(dtype=real) for _ in range(n_mg_levels)]  # residual
-# z = [ti.field(dtype=real) for _ in range(n_mg_levels)]  # M^-1 r
-# x = ti.field(dtype=real)  # solution
-# p = ti.field(dtype=real)  # conjugate gradient
-# Ap = ti.field(dtype=real)  # matrix-vector product
-# alpha = ti.field(dtype=real)  # step size
-# beta = ti.field(dtype=real)  # step size
-# sum = ti.field(dtype=real)  # storage for reductions
-# ti.root.pointer(ti.ijk, [ndof // 4]).dense(ti.ijk, 4).place(x, p, Ap)
+n_mg_levels = 4
+pre_and_post_smoothing = 2
+bottom_smoothing = 50
 
-# for l in range(n_mg_levels):
-#     ti.root.pointer(ti.ijk, [ndof // (4 * 2**l)]).dense(ti.ijk,
-#                                                          4).place(r[l], z[l])
-#
-# ti.root.place(alpha, beta, sum)
+r = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # residual
+z = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # M^-1 r
+
+p = ti.field(dtype=ti.f32)  # conjugate gradient
+Ap = ti.field(dtype=ti.f32)  # matrix-vector product
+
+alpha = ti.field(ti.f32)
+beta = ti.field(ti.f32)
+
+ti.root.pointer(ti.i, [n_free_dof // 4]).dense(ti.i, 4).place(p, Ap)
+
+for l in range(n_mg_levels):
+    ti.root.pointer(ti.i, [n_free_dof // (4 * 2**l)]).dense(ti.i, 4).place(r[l], z[l])
+
+ti.root.place(alpha, beta)
+
+A, x, b = ti.static(K_freedof, U_freedof, F_freedof)  # variable alias
 
 @ti.kernel
 def display_sampling():
@@ -97,7 +99,6 @@ def OC():
 def clamp(x: ti.template(), ely, elx):
     return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
 
-
 @ti.kernel
 def derivative_filter():
     rmin = 1.2
@@ -113,7 +114,6 @@ def derivative_filter():
                                 clamp(rho, ely, elx-1) + clamp(rho, ely, elx+1))
 
         dc[ely, elx] = dc[ely, elx] / weight
-
 
 @ti.kernel
 def assemble_K():
@@ -140,7 +140,7 @@ def backward_map_U():
         idx = free_dofs_vec[i]
         U[idx] = U_freedof[i]
 
-@ti.func
+@ti.kernel
 def cg_compute_Ap(A: ti.template(), p:ti.template()):
     for I in range(n_free_dof):
         Ap[I] = 0.
@@ -150,47 +150,127 @@ def cg_compute_Ap(A: ti.template(), p:ti.template()):
             Ap[i] += A[i, j] * p[j]
     # for i, j in ti.ndrange((n_free_dof, n_free_dof)): # error
 
-@ti.func
-def reduce(r: ti.template()):
+@ti.kernel
+def reduce(r1: ti.template(), r2: ti.template()) -> ti.f32:
     result = 0.
-    for I in range(r.shape[0]):
-        result += r[I] * r[I]  # rsnew = r' * r
+    for I in range(r1.shape[0]):
+        result += r1[I] * r2[I]  # dot
     return result
 
 @ti.kernel
-def conjungate_gradient():
-    A, x, b = ti.static(K_freedof, U_freedof, F_freedof) # variable alias
-
-    # init
-    for I in ti.grouped(b):
+def multigrid_init():
+    A, x, b = ti.static(K_freedof, U_freedof, F_freedof)  # variable alias
+    for I in range(n_free_dof):
+        r[0][I] = b[I]  # r = b - A * x = b
+        z[0][I] = 0.0
+        Ap[I] = 0.
+        p[I] = 0.
         x[I] = 0.
-        r[I] = b[I]  # r = b - A * x = b
-        p[I] = r[I]
 
-    rsold = reduce(r)
+@ti.kernel
+def smooth(l: ti.template()):
+    A, b = ti.static(K_freedof, F_freedof)  # variable alias
+    # Gauss-Seidel
+    for i in range(n_free_dof):
+        sigma = 0.
+        for j in range(n_free_dof):
+            if j != i :
+                sigma += A[i,j] * z[l][j]
+            if A[i, i] != 0.:
+                z[l][i] = (b[i] - sigma) / A[i, i]
+
+@ti.kernel
+def restrict(l: ti.template()):
+    A, b = ti.static(K_freedof, F_freedof)  # variable alias
+
+    # calculate residual
+    res = 0.
+    for i in range(n_free_dof):
+        sum = 0.
+        for j in range(n_free_dof):
+            sum += A[i,j] * z[l][j]
+        res += b[i] - sum
+
+    for i in range(n_free_dof):
+        r[l+1][i // 2] += res * 0.5
+
+
+@ti.kernel
+def prolongate(l: ti.template()):
+    for I in ti.grouped(z[l]):
+        z[l][I] = z[l + 1][I // 2]  # sampling for interpolation
+
+
+def apply_preconditioner():
+    z[0].fill(0)
+    for l in range(n_mg_levels - 1):
+        for i in range(pre_and_post_smoothing << l):
+            smooth(l)
+        z[l + 1].fill(0)
+        r[l + 1].fill(0)
+        restrict(l)
+
+    for i in range(bottom_smoothing):
+        smooth(n_mg_levels - 1)
+
+    for l in reversed(range(n_mg_levels - 1)):
+        prolongate(l)
+        for i in range(pre_and_post_smoothing << l):
+            smooth(l)
+
+@ti.kernel
+def cg_update_p():
+    for I in ti.grouped(p):
+        p[I] = z[0][I] + beta[None] * p[I]
+
+@ti.kernel
+def cg_update_x():
+    x = ti.static(U_freedof)  # variable alias
+    for I in ti.grouped(p):
+        x[I] += alpha[None] * p[I]
+
+@ti.kernel
+def cg_update_r():
+    for I in ti.grouped(p):
+        r[0][I] -= alpha[None] * Ap[I]
+
+def mgpcg():
+    '''
+    :Reference https://en.wikipedia.org/wiki/Conjugate_gradient_method
+    :Reference https://en.wikipedia.org/wiki/Multigrid_method
+    :Reference https://github.com/taichi-dev/taichi/blob/master/examples/algorithm/mgpcg.py
+
+    '''
+
+    multigrid_init()
+    initial_rTr = reduce(r[0], r[0]) # Used to check convergence
+
+    apply_preconditioner() # Get z0 = M^-1 r0
+
+    cg_update_p() # p0 = z0
+    old_zTr = reduce(r[0], z[0])
 
     # cg iteration
     for iter in range(n_free_dof + 50):
+        print("debug")
         cg_compute_Ap(A, p)
+        pAp = reduce(p, Ap)
+        alpha[None] = old_zTr / pAp
 
-        beta = 0.
-        for I in range(n_free_dof):
-            beta += p[I] * Ap[I] # p' * Ap
-        alpha = rsold / beta
+        cg_update_x() # x = x + alpha * p
+        cg_update_r() # r = r - alpha * Ap
 
-        for I in range(n_free_dof):
-            x[I] += alpha * p[I]  # x = x + alpha * Ap
-            r[I] -= alpha * Ap[I] # r = r - alpha * Ap
-
-        rsnew = reduce(r)
-
-        if ti.sqrt(rsnew) < 1e-10:
+        rTr = reduce(r[0], r[0])  # check convergence
+        if rTr < initial_rTr * 1.0e-12:
             break
 
-        for I in range(n_free_dof):
-            p[I] = r[I] + (rsnew / rsold) * p[I] # p = r + (rsnew / rsold) * p
+        apply_preconditioner() # update z:  z_{k+1} = M^-1 r_{k+1}
+        new_zTr = reduce(r[0], z[0])
+        beta[None] = new_zTr / old_zTr
 
-        rsold = rsnew
+        cg_update_p()
+        old_zTr = new_zTr
+
 
 def get_Ke():
     k = np.array(
@@ -267,7 +347,7 @@ if __name__ == '__main__':
             iter += 1
 
             assemble_K()
-            conjungate_gradient()
+            mgpcg()
             backward_map_U()
             get_dc()
             derivative_filter()
@@ -286,7 +366,7 @@ if __name__ == '__main__':
             gui.set_image(display)
             gui.show()
 
-            # ti.print_kernel_profile_info()
+            ti.print_kernel_profile_info()
 
 
 
