@@ -13,7 +13,8 @@ run [main.py](./main.py)
 1. SIMP
 2. Basic sensitivity filtering 
 3. MGPCG solver (TODO)
-4. More...
+4. BESO (TODO)
+5. More...
 
 ## Reference
 1. [A 99 line topology optimization code written in MATLAB](https://www.topopt.mek.dtu.dk/apps-and-software/a-99-line-topology-optimization-code-written-in-matlab)
