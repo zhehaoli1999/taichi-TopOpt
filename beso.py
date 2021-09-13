@@ -1,7 +1,8 @@
 import taichi as ti
 import numpy as np
 import math
-# from utils import *
+from scipy import sparse
+from pypardiso import spsolve
 import time
 
 # ti.init(ti.cpu, kernel_profiler=True)
@@ -9,9 +10,9 @@ ti.init(ti.cpu)
 
 gui_y = 500
 gui_x = 2 * gui_y
-display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
+display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 
-nely = 4
+nely = 40
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -26,29 +27,28 @@ rmin = 3
 xmin = 1e-3
 ert = 0.02
 
-xe = ti.field(ti.f32, shape=(nely, nelx))
-K = ti.field(ti.f32, shape=(ndof, ndof))
-F = ti.field(ti.f32, shape=(ndof))
-U = ti.field(ti.f32, shape=(ndof))
-Ke = ti.field(ti.f32, shape=(8,8))
+xe = ti.field(ti.f64, shape=(nely, nelx))
+K = ti.field(ti.f64, shape=(ndof, ndof))
+F = ti.field(ti.f64, shape=(ndof))
+U = ti.field(ti.f64, shape=(ndof))
+Ke = ti.field(ti.f64, shape=(8,8))
 
-fixed_dofs = list(range(0, 2 * (nely + 1), 2))
-fixed_dofs.append(2 * (nelx + 1) * (nely + 1) - 1)
+fixed_dofs = list(range(0, 2 * (nely + 1)))
 all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
 free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)))
 n_free_dof = len(free_dofs)
 
 free_dofs_vec = ti.field(ti.int32, shape=n_free_dof)
-K_freedof = ti.field(ti.f32, shape=(n_free_dof, n_free_dof))
-F_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof))
-U_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof))
+K_freedof = ti.field(ti.f64, shape=(n_free_dof, n_free_dof))
+F_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
+U_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
-dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
+dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
 
 # for cg
-r = ti.field(dtype=ti.f32, shape=(n_free_dof))
-p = ti.field(dtype=ti.f32, shape=(n_free_dof))
-Ap = ti.field(dtype=ti.f32, shape=(n_free_dof))
+r = ti.field(dtype=ti.f64, shape=(n_free_dof))
+p = ti.field(dtype=ti.f64, shape=(n_free_dof))
+Ap = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
 @ti.kernel
 def display_sampling():
@@ -198,7 +198,7 @@ def get_Ke():
     Ke.from_numpy(Ke_)
 
 @ti.kernel
-def get_dc()-> ti.f32:
+def get_dc()-> ti.f64:
     compliance = 0.
     for ely, elx in ti.ndrange(nely, nelx):
         n1 = (nely + 1) * elx + ely + 1
@@ -218,6 +218,11 @@ def get_dc()-> ti.f32:
         dc[ely, elx] = xe[ely, elx] ** (penalty - 1) * d
     return compliance
 
+def Solver():
+    KG = sparse.csr_matrix(K_freedof.to_numpy())
+    Fv = F_freedof.to_numpy()
+    return spsolve(KG, Fv)
+
 @ti.kernel
 def initialize():
     # 1. initialize rho
@@ -225,16 +230,11 @@ def initialize():
         xe[I] = 1
 
     # 2. set boundary condition
-    F[1] = -1.
+    F[2 * nelx * (nely + 1) - 1] = -1.
     for i in range(n_free_dof):
         F_freedof[i] = F[free_dofs_vec[i]]
 
 if __name__ == '__main__':
-    # window = ti.ui.Window('Taichi TopoOpt', (nelx , nely))
-    # while window.running:
-    #     canvas = window.get_canvas()
-        # canvas.set_background_color()
-
     gui = ti.GUI('Taichi TopoOpt', res=(gui_x, gui_y))
     free_dofs_vec.from_numpy(free_dofs)
     initialize()
@@ -249,21 +249,17 @@ if __name__ == '__main__':
     volume = 1.
     dc_old = []
     history_C = []
-    history_V = []
     print(f"total dof = {ndof}")
     while gui.running:
         x_old = xe.to_numpy()
         iter = 0
-        while change > 0.01:
+        while change > 1e-2:
             iter += 1
 
             assemble_K()
-            a = K.to_numpy()
-            print(a)
-            conjungate_gradient()
+            U_freedof.from_numpy(Solver())
             backward_map_U()
             compliance = get_dc()
-            ab = dc.to_numpy()
             dc.from_numpy(filt(x_old, dc.to_numpy()))
             dc_old = averaging_dc(dc_old)
 
