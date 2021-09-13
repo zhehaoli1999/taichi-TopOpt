@@ -42,7 +42,7 @@ dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
 n_mg_levels = 4
 pre_and_post_smoothing = 2
 bottom_smoothing = 50
-use_multigrid = False
+use_multigrid = True
 
 K = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]
 for l in range(n_mg_levels):
@@ -50,6 +50,7 @@ for l in range(n_mg_levels):
     ti.root.dense(ti.ij, ndof // 2**l).place(K[l])
 
 K_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
+F_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
 free_dofs_vec = [ti.field(dtype=ti.int32) for _ in range(n_mg_levels)] # free dof indices
 r = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # residual
 z = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # M^-1 r
@@ -73,7 +74,7 @@ for l in range(n_mg_levels):
 
     ti.root.dense(ti.ij, (n_free_dof_l, n_free_dof_l)).place(K_freedof[l])
     ti.root.dense(ti.i, n_free_dof_l).place(free_dofs_vec[l])
-    ti.root.dense(ti.i, n_free_dof_l).place(r[l], z[l])
+    ti.root.dense(ti.i, n_free_dof_l).place(r[l], z[l], F_freedof[l])
 
 n_free_dof = np.array(n_free_dof, dtype=int)
 n_free_dof_vec = ti.field(ti.int32, shape=(n_mg_levels))
@@ -81,10 +82,11 @@ n_free_dof_vec.from_numpy(n_free_dof)  # num of free dofs in each level
 
 for l in range(n_mg_levels):
    free_dofs_vec[l].from_numpy(free_dofs_list[l])
+   F_freedof[l][0] = -1
 
 
 U_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))
-F_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))
+# F_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))
 
 p = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))  # conjugate gradient
 Ap = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))  # matrix-vector product
@@ -96,7 +98,7 @@ alpha = ti.field(ti.f32)
 beta = ti.field(ti.f32)
 ti.root.place(alpha, beta)
 
-A, x, b = ti.static(K, U_freedof, F_freedof)  # variable alias
+A, x, b = ti.static(K_freedof, U_freedof, F_freedof)  # variable alias
 
 @ti.kernel
 def initialize():
@@ -104,9 +106,9 @@ def initialize():
     for I in ti.grouped(rho):
         rho[I] = volfrac
     # 2. set boundary condition
-    F[1] = -1.
-    for i in range(n_free_dof_vec[0]):
-        F_freedof[i] = F[free_dofs_vec[0][i]]
+    # F[1] = -1.
+    # for i in range(n_free_dof_vec[0]):
+    #     F_freedof[i] = F[free_dofs_vec[0][i]]
 
 
 @ti.kernel
@@ -208,7 +210,7 @@ def backward_map_U():
 @ti.kernel
 def multigrid_init():
     for I in range(n_free_dof[0]):
-        r[0][I] = b[I]  # r = b - A * x = b
+        r[0][I] = b[0][I]  # r = b - A * x = b
         z[0][I] = 0.0
         Ap[I] = 0.
         p[I] = 0.
@@ -216,38 +218,43 @@ def multigrid_init():
 
 @ti.kernel
 def smooth(l: ti.template()):
-    # Gauss-Seidel
-    for i in range(ndof // 2**l):
+    # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
+    for i in range(n_free_dof_vec[l]):
         sigma = 0.
-        for j in range(ndof // 2**l):
+        for j in range(n_free_dof_vec[l]):
             if j != i :
                 sigma += A[l][i, j] * z[l][j]
             if A[l][i, i] != 0.:
                 z[l][i] = (r[l][i] - sigma) / A[l][i, i]
 
+@ti.func
+def clamp_vec(v: ti.template(), l: ti.template(), n):
+    return v[l][n] if 0 <= n < n_free_dof_vec[l] else 0.
+
 @ti.kernel
 def restrict(l: ti.template()):
     # calculate residual
-    res = 0.
-    for i in range(ndof // 2**l):
+    for i in range(n_free_dof_vec[l]):
         sum = 0.
-        for j in range(ndof // 2**l):
+        for j in range(n_free_dof_vec[l]):
             sum += A[l][i,j] * z[l][j]
-        res += r[l][i] - sum
+        r[l][i] = b[l][i] - sum # get residual
 
-    for i in range(ndof // 2**l):
-        r[l+1][i // 2] += res * 0.5 #FIXME
+    for i in range(n_free_dof_vec[l+1]):
+        # r[l+1][i] = (clamp_vec(r, l, i * 2) + clamp_vec(r, l, i*2 + 1)) / 2. # down sampling #TODO
+        r[l + 1][i] = clamp_vec(r, l, i * 2) # down sampling
 
 
 @ti.kernel
 def prolongate(l: ti.template()):
-    for I in ti.grouped(z[l]):
-        z[l][I] = z[l + 1][I // 2]  # sampling for interpolation
+    for I in range(n_free_dof_vec[l]):
+        z[l][I] = clamp_vec(z, l + 1, I // 2)  # sampling for interpolation
+
 
 def apply_preconditioner():
     z[0].fill(0)
     for l in range(n_mg_levels - 1):
-        for i in range(pre_and_post_smoothing << l):
+        for i in range(pre_and_post_smoothing << l): # pre_and_post_smoothing << l = pre_and_post_smoothing // 2**l
             smooth(l)
         z[l + 1].fill(0)
         r[l + 1].fill(0)
@@ -313,11 +320,8 @@ def mgpcg():
     old_zTr = reduce(r[0], z[0])
 
     # cg iteration
-    for iter in range(ndof + 50):
+    for iter in range(n_free_dof[0] + 50):
         cg_compute_Ap(A[0], p)
-        # print(F)
-        # print(r[0]) #TODO r[0] not equal to F, error here
-        # print(p)
         pAp = reduce(p, Ap)
         alpha[None] = old_zTr / pAp
 
@@ -402,13 +406,10 @@ if __name__ == '__main__':
 
     for l in range(n_mg_levels):
         mg_assemble_K(l)
-    print(K[0])
-    print(K_freedof[0])
-    #     print(K[l])
-    #     # print(free_dofs_vec[l])
 
-
-    print(f"total dof = {ndof}")
+    mgpcg()
+    print(U_freedof)
+    # print(f"total dof = {ndof}")
     # while gui.running:
     #     x_old = rho.to_numpy()
     #     iter = 0
@@ -435,8 +436,8 @@ if __name__ == '__main__':
     #
     #         gui.set_image(display)
     #         gui.show()
-    #
-    #         ti.print_kernel_profile_info()
+
+            # ti.print_kernel_profile_info()
 
 
 
