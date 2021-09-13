@@ -1,5 +1,6 @@
 import taichi as ti
 import numpy as np
+import math
 # from utils import *
 import time
 
@@ -10,22 +11,20 @@ gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
 
-nely = 14
+nely = 4
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
-
 
 E = 1.
 nu = 0.3
 volfrac = 0.5 # volume limit
 penalty = 3
-rmin = 5
+rmin = 3
 
 # BESO parameter
 xmin = 1e-3
 ert = 0.02
-
 
 xe = ti.field(ti.f32, shape=(nely, nelx))
 K = ti.field(ti.f32, shape=(ndof, ndof))
@@ -82,22 +81,24 @@ def BESO(crtvol):
 def clamp(x: ti.template(), ely, elx):
     return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
 
-@ti.kernel
-def derivative_filter():
-    for ely, elx in ti.ndrange(nely, nelx):
-        dc[ely, elx] = rmin * clamp(xe, ely, elx) * dc[ely, elx] + \
-                       (rmin - 1) * (clamp(xe, ely - 1, elx) * clamp(dc, ely - 1, elx) + \
-                                     clamp(xe, ely + 1, elx) * clamp(dc, ely + 1, elx) + \
-                                     clamp(xe, ely, elx - 1) * clamp(dc, ely, elx - 1) + \
-                                     clamp(xe, ely, elx + 1) * clamp(dc, ely, elx + 1))
 
-        weight = rmin * clamp(xe, ely, elx) + \
-                 (rmin - 1) * (clamp(xe, ely - 1, elx) + clamp(xe, ely + 1, elx) + \
-                               clamp(xe, ely, elx - 1) + clamp(xe, ely, elx + 1))
+def filt(x, dc):
+    nely, nelx = x.shape
+    rminf = math.floor(rmin)
+    dcf = np.zeros((nely, nelx))
 
-        dc[ely, elx] = dc[ely, elx] / weight
+    for i in range(nelx):
+        for j in range(nely):
+            sum_ = 0
+            for k in range(max(i - rminf, 0), min(i + rminf + 1, nelx)):
+                for l in range(max(j - rminf, 0), min(j + rminf + 1, nely)):
+                    fac = rmin - math.sqrt((i - k) ** 2 + (j - l) ** 2)
+                    sum_ += + max(0, fac)
+                    dcf[j, i] = dcf[j, i] + max(0, fac) * dc[l, k]
+            dcf[j, i] = dcf[j, i] / sum_
+    return dcf
 
-def sampling_dc(dc_old):
+def averaging_dc(dc_old):
     if iter > 1:
         for ely, elx in ti.ndrange(nely, nelx):
             dc[ely, elx] = (dc[ely, elx] + dc_old[ely, elx]) * 0.5
@@ -257,11 +258,14 @@ if __name__ == '__main__':
             iter += 1
 
             assemble_K()
+            a = K.to_numpy()
+            print(a)
             conjungate_gradient()
             backward_map_U()
             compliance = get_dc()
-            derivative_filter()
-            dc_old = sampling_dc(dc_old)
+            ab = dc.to_numpy()
+            dc.from_numpy(filt(x_old, dc.to_numpy()))
+            dc_old = averaging_dc(dc_old)
 
             history_C.append(compliance)
 
