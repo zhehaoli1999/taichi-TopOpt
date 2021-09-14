@@ -1,7 +1,5 @@
 import taichi as ti
 import numpy as np
-# from utils import *
-import time
 
 # ti.init(ti.cpu, kernel_profiler=True)
 ti.init(ti.cpu)
@@ -10,7 +8,7 @@ gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
 
-nely = 16
+nely = 8
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -26,23 +24,13 @@ F = ti.field(ti.f32, shape=(ndof))
 U = ti.field(ti.f32, shape=(ndof))
 Ke = ti.field(ti.f32, shape=(8,8))
 
-# free_dofs_vec = ti.field(ti.int32, shape=n_free_dof)
-# K_freedof = ti.field(ti.f32, shape=(n_free_dof, n_free_dof))
-# F_freedof = ti.field(dtype=ti.f32, shape=(ndof))
-# U_freedof = ti.field(dtype=ti.f32, shape=(ndof))
-
 dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
 
-# for cg
-# r = ti.field(dtype=ti.f32, shape=(n_free_dof))
-# p = ti.field(dtype=ti.f32, shape=(n_free_dof))
-# Ap = ti.field(dtype=ti.f32, shape=(n_free_dof))
-
 # for mgpcg
-n_mg_levels = 4
+n_mg_levels = 2
 pre_and_post_smoothing = 2
 bottom_smoothing = 50
-use_multigrid = True
+use_multigrid = False
 
 K = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]
 for l in range(n_mg_levels):
@@ -51,48 +39,55 @@ for l in range(n_mg_levels):
 
 K_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
 F_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
-free_dofs_vec = [ti.field(dtype=ti.int32) for _ in range(n_mg_levels)] # free dof indices
+freedof_idx = [ti.field(dtype=ti.int32) for _ in range(n_mg_levels)] # free dof indices
 r = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # residual
 z = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # M^-1 r
 
-n_free_dof = [] # a list of num of free dofs in each level
-free_dofs_list = []
+n_freedof_list = [] # a list of num of free dofs in each level
+freedofs_list = []
 
 for l in range(n_mg_levels):
     nelx_l = nelx // 2 ** l
     nely_l = nely // 2 ** l
     ndof_l = ndof // 2 ** l
 
+    # Set fixed nodes
     fixed_dofs = list(range(0, 2 * (nely_l + 1), 2))
     fixed_dofs.append(2 * (nelx_l + 1) * (nely_l + 1) - 1)
+
+    # Get free dofs
     all_dofs = list(range(0, 2*(nelx_l + 1) * (nely_l + 1)))
     free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)))
-    free_dofs_list.append(free_dofs)
 
+    freedofs_list.append(free_dofs)
     n_free_dof_l = len(free_dofs)
-    n_free_dof.append(n_free_dof_l)
+    n_freedof_list.append(n_free_dof_l)
 
+    # Place taichi fields
     ti.root.dense(ti.ij, (n_free_dof_l, n_free_dof_l)).place(K_freedof[l])
-    ti.root.dense(ti.i, n_free_dof_l).place(free_dofs_vec[l])
+    ti.root.dense(ti.i, n_free_dof_l).place(freedof_idx[l])
     ti.root.dense(ti.i, n_free_dof_l).place(r[l], z[l], F_freedof[l])
 
-n_free_dof = np.array(n_free_dof, dtype=int)
-n_free_dof_vec = ti.field(ti.int32, shape=(n_mg_levels))
-n_free_dof_vec.from_numpy(n_free_dof)  # num of free dofs in each level
+n_freedof_np = np.array(n_freedof_list, dtype=int)
+n_freedof = ti.field(ti.int32, shape=(n_mg_levels))
+n_freedof.from_numpy(n_freedof_np)  # num of free dofs in each level
+
+# print(f"n_freedof of each level: {n_freedof}")
 
 for l in range(n_mg_levels):
-   free_dofs_vec[l].from_numpy(free_dofs_list[l])
+   freedof_idx[l].from_numpy(freedofs_list[l])
    F_freedof[l][0] = -1
+   # print(f"free_dof_vec[{l}]: {freedof_idx[l]}")
 
 
-U_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))
-# F_freedof = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))
+U_freedof = ti.field(dtype=ti.f32, shape=(n_freedof[0]))
+# F_freedof = ti.field(dtype=ti.f32, shape=(n_freedof[0]))
 
-p = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))  # conjugate gradient
-Ap = ti.field(dtype=ti.f32, shape=(n_free_dof[0]))  # matrix-vector product
+p = ti.field(dtype=ti.f32, shape=(n_freedof[0]))  # conjugate gradient
+Ap = ti.field(dtype=ti.f32, shape=(n_freedof[0]))  # matrix-vector product
 # ti.root.pointer(ti.i, [ndof // 1]).dense(ti.i, 1).place(p, Ap)
-# ti.root.dense(ti.i, n_free_dof[0]).place(p)
-# ti.root.dense(ti.i, n_free_dof[0]).place(Ap)
+# ti.root.dense(ti.i, n_freedof[0]).place(p)
+# ti.root.dense(ti.i, n_freedof[0]).place(Ap)
 
 alpha = ti.field(ti.f32)
 beta = ti.field(ti.f32)
@@ -107,8 +102,8 @@ def initialize():
         rho[I] = volfrac
     # 2. set boundary condition
     # F[1] = -1.
-    # for i in range(n_free_dof_vec[0]):
-    #     F_freedof[i] = F[free_dofs_vec[0][i]]
+    # for i in range(n_freedof[0]):
+    #     F_freedof[i] = F[freedof_idx[0][i]]
 
 
 @ti.kernel
@@ -174,8 +169,8 @@ def derivative_filter():
 #             K[edof[i], edof[j]] += rho[ely, elx]**simp_penal * Ke[i, j]
 #
 #     # 2. Get K_freedof
-#     for i, j in ti.ndrange(n_free_dof,n_free_dof):
-#         K_freedof[i, j] = K[free_dofs_vec[i], free_dofs_vec[j]]
+#     for i, j in ti.ndrange(n_freedof,n_freedof):
+#         K_freedof[i, j] = K[freedof_idx[i], freedof_idx[j]]
 
 @ti.kernel
 def mg_assemble_K(l : ti.template()):
@@ -195,21 +190,21 @@ def mg_assemble_K(l : ti.template()):
             K[l][edof[i], edof[j]] += rho[ely * 2**l, elx * 2**l]**simp_penal * Ke[i, j] #FIXME problem with round error
 
     # 2. Get K_freedof
-    n_free_dof_l = n_free_dof_vec[l]
+    n_free_dof_l = n_freedof[l]
     for i, j in ti.ndrange(n_free_dof_l, n_free_dof_l):
-        K_freedof[l][i, j] = K[l][free_dofs_vec[l][i], free_dofs_vec[l][j]]
+        K_freedof[l][i, j] = K[l][freedof_idx[l][i], freedof_idx[l][j]]
 
 
 @ti.kernel
 def backward_map_U():
     # mapping U_freedof backward to U
-    for i in range(n_free_dof_vec[0]):
-        idx = free_dofs_vec[0][i]
+    for i in range(n_freedof[0]):
+        idx = freedof_idx[0][i]
         U[idx] = U_freedof[i]
 
 @ti.kernel
 def multigrid_init():
-    for I in range(n_free_dof[0]):
+    for I in range(n_freedof[0]):
         r[0][I] = b[0][I]  # r = b - A * x = b
         z[0][I] = 0.0
         Ap[I] = 0.
@@ -219,9 +214,9 @@ def multigrid_init():
 @ti.kernel
 def smooth(l: ti.template()):
     # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
-    for i in range(n_free_dof_vec[l]):
+    for i in range(n_freedof[l]):
         sigma = 0.
-        for j in range(n_free_dof_vec[l]):
+        for j in range(n_freedof[l]):
             if j != i :
                 sigma += A[l][i, j] * z[l][j]
             if A[l][i, i] != 0.:
@@ -229,32 +224,36 @@ def smooth(l: ti.template()):
 
 @ti.func
 def clamp_vec(v: ti.template(), l: ti.template(), n):
-    return v[l][n] if 0 <= n < n_free_dof_vec[l] else 0.
+    return v[l][n] if 0 <= n < n_freedof[l] else 0.
+
+@ti.func
+def down_sampling(r: ti.template(), i):
+    i /
 
 @ti.kernel
 def restrict(l: ti.template()):
     # calculate residual
-    for i in range(n_free_dof_vec[l]):
+    for i in range(n_freedof[l]):
         sum = 0.
-        for j in range(n_free_dof_vec[l]):
+        for j in range(n_freedof[l]):
             sum += A[l][i,j] * z[l][j]
         r[l][i] = b[l][i] - sum # get residual
 
-    for i in range(n_free_dof_vec[l+1]):
+    for i in range(n_freedof[l+1]):
         # r[l+1][i] = (clamp_vec(r, l, i * 2) + clamp_vec(r, l, i*2 + 1)) / 2. # down sampling #TODO
         r[l + 1][i] = clamp_vec(r, l, i * 2) # down sampling
 
 
 @ti.kernel
 def prolongate(l: ti.template()):
-    for I in range(n_free_dof_vec[l]):
+    for I in range(n_freedof[l]):
         z[l][I] = clamp_vec(z, l + 1, I // 2)  # sampling for interpolation
 
 
 def apply_preconditioner():
     z[0].fill(0)
     for l in range(n_mg_levels - 1):
-        for i in range(pre_and_post_smoothing << l): # pre_and_post_smoothing << l = pre_and_post_smoothing // 2**l
+        for i in range(pre_and_post_smoothing << l): # equals to pre_and_post_smoothing // 2**l
             smooth(l)
         z[l + 1].fill(0)
         r[l + 1].fill(0)
@@ -276,7 +275,7 @@ def cg_compute_Ap(A: ti.template(), p:ti.template()):
     for i in range(ndof):
         for j in range(ndof):
             Ap[i] += A[i, j] * p[j]
-    # for i, j in ti.ndrange((n_free_dof, n_free_dof)): # error
+    # for i, j in ti.ndrange((n_freedof, n_freedof)): # error
 
 @ti.kernel
 def reduce(r1: ti.template(), r2: ti.template()) -> ti.f32:
@@ -320,7 +319,7 @@ def mgpcg():
     old_zTr = reduce(r[0], z[0])
 
     # cg iteration
-    for iter in range(n_free_dof[0] + 50):
+    for iter in range(n_freedof[0] + 50):
         cg_compute_Ap(A[0], p)
         pAp = reduce(p, Ap)
         alpha[None] = old_zTr / pAp
@@ -406,6 +405,7 @@ if __name__ == '__main__':
 
     for l in range(n_mg_levels):
         mg_assemble_K(l)
+    # print(K_freedof[1])
 
     mgpcg()
     print(U_freedof)
