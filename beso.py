@@ -1,8 +1,10 @@
 import taichi as ti
 import numpy as np
 import math
+
 from scipy import sparse
 from pypardiso import spsolve
+
 import time
 
 # ti.init(ti.cpu, kernel_profiler=True)
@@ -220,6 +222,7 @@ def get_dc()-> ti.f64:
 
 def Solver():
     KG = sparse.csr_matrix(K_freedof.to_numpy())
+
     Fv = F_freedof.to_numpy()
     return spsolve(KG, Fv)
 
