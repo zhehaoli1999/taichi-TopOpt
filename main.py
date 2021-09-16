@@ -1,7 +1,5 @@
 import taichi as ti
 import numpy as np
-from utils import *
-import time
 
 # ti.init(ti.cpu, kernel_profiler=True)
 ti.init(ti.cpu)
@@ -18,6 +16,7 @@ ndof = 2 * n_node
 E = 1.
 nu = 0.3
 volfrac = 0.5 # volume limit
+rmin = 3
 simp_penal = 3
 
 rho = ti.field(ti.f32, shape=(nely, nelx))
@@ -79,7 +78,6 @@ def clamp(x: ti.template(), ely, elx):
 
 @ti.kernel
 def derivative_filter():
-    rmin = 1.2
     for ely, elx in ti.ndrange(nely, nelx):
         dc[ely, elx] = rmin * clamp(rho, ely, elx) * dc[ely, elx] +  \
                        (rmin - 1) * (clamp(rho, ely-1, elx) * clamp(dc, ely-1, elx) + \
@@ -190,7 +188,7 @@ def get_Ke():
 
 
 @ti.kernel
-def get_dc():
+def get_dc() -> ti.f32:
     compliance = 0.
     for ely, elx in ti.ndrange(nely, nelx):
         n1 = (nely + 1) * elx + ely + 1
@@ -209,7 +207,7 @@ def get_dc():
         compliance += rho[ely, elx]**simp_penal * d
 
         dc[ely, elx] = -simp_penal * rho[ely, elx]**(simp_penal -1) * d
-
+    return compliance
 
 @ti.kernel
 def initialize():
@@ -248,14 +246,14 @@ if __name__ == '__main__':
             assemble_K()
             conjungate_gradient()
             backward_map_U()
-            get_dc()
+            compliance = get_dc()
             derivative_filter()
 
             x = OC()
             volume = sum(sum(x)) / (nely * nelx)
             change = np.max(np.abs(x - x_old))
 
-            print(f"iter: {iter}, volume = {volume}, change = {change}")
+            print(f"iter: {iter}, volume = {volume}, compliance = {compliance}, change = {change}")
 
             x_old = x
 
@@ -266,8 +264,5 @@ if __name__ == '__main__':
             gui.show()
 
             # ti.print_kernel_profile_info()
-
-
-
 
 
