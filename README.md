@@ -1,4 +1,4 @@
-# Taichi TopoOpt 
+# Taichi TopOpt 
 
 ### (Under Active Development)
 ![result2d](./img/result2d.png)
@@ -9,9 +9,8 @@ A topology optimization framework written in Taichi programming language, which 
 + taichi 0.7.31
 + numpy
 + scipy
-+ [pypardiso](https://github.com/haasad/PyPardisoProject)
 ## How to use
-run [main.py](./main.py)
+run [main.py](simp.py)
 
 ## Feature
 1. SIMP
