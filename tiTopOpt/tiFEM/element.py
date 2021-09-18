@@ -1,4 +1,4 @@
-from node import *
+from nodepy import *
 
 
 class Element(object):

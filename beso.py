@@ -2,8 +2,8 @@ import taichi as ti
 import numpy as np
 import math
 
-from scipy import sparse
-from pypardiso import spsolve
+from scipy.sparse import csr_matrix
+from scipy.sparse.linalg import spsolve
 
 import time
 
@@ -221,7 +221,7 @@ def get_dc()-> ti.f64:
     return compliance
 
 def Solver():
-    KG = sparse.csr_matrix(K_freedof.to_numpy())
+    KG = csr_matrix(K_freedof.to_numpy())
 
     Fv = F_freedof.to_numpy()
     return spsolve(KG, Fv)

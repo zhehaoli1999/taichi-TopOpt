@@ -1,5 +1,4 @@
 import numpy as np
-import taichi as ti
 
 
 class Node(object):
