@@ -1,4 +1,4 @@
-from element import *
+from elementpy import *
 
 
 class Quadrangle(Element):

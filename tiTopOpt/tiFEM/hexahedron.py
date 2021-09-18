@@ -1,6 +1,7 @@
 from element import *
 
 
+@ti.data_oriented
 class Hexahedron(Element):
     def __init__(self, nodes, E=1., nu=0.3):
         if len(nodes) != 8:
@@ -16,18 +17,17 @@ class Hexahedron(Element):
         for nd in self.nodes:
             nd.init_unknowns("Ux", "Uy", "Uz")
 
-        self._ndof = 3
-
     def calc_D(self):
         a = self.E / ((1. + self.nu) * (1. - 2. * self.nu))
         c1 = 1. - self.nu
         c2 = (1. - self.nu) / 2.
-        self._D = a * np.array([[c1, self.nu, self.nu, 0., 0., 0.],
+        D = a * np.array([[c1, self.nu, self.nu, 0., 0., 0.],
                           [self.nu, c1, self.nu, 0., 0., 0.],
                           [self.nu, self.nu, c1, 0., 0., 0.],
                           [0., 0., 0., c2, 0., 0.],
                           [0., 0., 0., 0., c2, 0.],
                           [0., 0., 0., 0., 0., c2]])
+        self.D.from_numpy(D)
 
     def calc_B(self, *intv_pts):
         s = intv_pts[0]
@@ -67,14 +67,14 @@ class Hexahedron(Element):
                        [xt, yt, zt],
                        [xu, yu, zu]])
 
-        self._J = np.linalg.det(MJ)
+        self.J = np.linalg.det(MJ)
         J_v = np.linalg.inv(MJ)
 
         Nx = [J_v[0, 0] * Ns[i] + J_v[0, 1] * Nt[i] + J_v[0, 2] * Nu[i] for i in range(8)]
         Ny = [J_v[1, 0] * Ns[i] + J_v[1, 1] * Nt[i] + J_v[1, 2] * Nu[i] for i in range(8)]
         Nz = [J_v[2, 0] * Ns[i] + J_v[2, 1] * Nt[i] + J_v[2, 2] * Nu[i] for i in range(8)]
 
-        self._B = np.array(
+        B = np.array(
             [[Nx[0], 0, 0, Nx[1], 0, 0, Nx[2], 0, 0, Nx[3], 0, 0, Nx[4], 0, 0, Nx[5], 0, 0, Nx[6], 0, 0, Nx[7], 0, 0],
              [0, Ny[0], 0, 0, Ny[1], 0, 0, Ny[2], 0, 0, Ny[3], 0, 0, Ny[4], 0, 0, Ny[5], 0, 0, Ny[6], 0, 0, Ny[7], 0],
              [0, 0, Nz[0], 0, 0, Nz[1], 0, 0, Nz[2], 0, 0, Nz[3], 0, 0, Nz[4], 0, 0, Nz[5], 0, 0, Nz[6], 0, 0, Nz[7]],
@@ -86,4 +86,20 @@ class Hexahedron(Element):
              [Nz[0], 0, Nx[0], Nz[1], 0, Nx[1], Nz[2], 0, Nx[2], Nz[3], 0, Nx[3], Nz[4], 0, Nx[4], Nz[5], 0, Nx[5],
               Nz[6],
               0, Nx[6], Nz[7], 0, Nx[7]]])
+        self.B.from_numpy(B)
 
+
+if __name__ == '__main__':
+    ti.init()
+    a = Node(0,0,0)
+    b = Node(1,0,0)
+    c = Node(1,1,0)
+    d = Node(0,1,0)
+    e = Node(0,0,1)
+    f = Node(1,0,1)
+    g = Node(1,1,1)
+    h = Node(0,1,1)
+    ele = Hexahedron([a,b,c,d,e,f,g,h])
+    print(ele.nodes)
+    print(ele.ndof)
+    print(ele.B)

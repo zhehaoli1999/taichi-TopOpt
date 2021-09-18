@@ -2,16 +2,20 @@ import numpy as np
 import taichi as ti
 
 
+@ti.data_oriented
 class Node(object):
     def __init__(self, *pos):
-        self.init_pos(*pos) # position
-        self.set_dof() # degree-of-freedom
-        self.ID = None # index
-        self._force = [] # force vector
-        self._disp = [] # displacement vector
+        if len(pos) != 2 and len(pos) != 3:
+            raise AttributeError("Node dimension must be 2 or 3")
+        self.dim = len(pos) # dimension
+        self.ID = None  # index
+        self.pos = ti.Vector(pos, dt=ti.f64) # position
+        self.force = ti.field(ti.f64, shape=self.dim) # force vector
+        self.disp = ti.field(ti.f64, shape=self.dim) # displacement vector
+        self.dof = ti.Vector(np.zeros(self.dim),dt=ti.f64) # degree-of-freedom
 
     def __repr__(self):
-        return "Node:%r" % (self.pos,)
+        return str(self.dim) + "D Node: " + str(self.pos)
 
     def __getitem__(self, index):
         return self.pos[index]
@@ -23,145 +27,40 @@ class Node(object):
 
     def __eq__(self, other):
         assert issubclass(type(other), Node), "Must be Node type"
-        a = np.array(self.pos)
-        b = np.array(other.pos)
+        a = self.pos.to_numpy()
+        b = other.pos.to_numpy()
         if np.isclose(a, b).all():
             return True
         else:
             return False
 
-    @property
-    def x(self):
-        return self._x
+    def set_force(self, *force):
+        if len(force) != self.dim:
+            raise AttributeError("The dimension of the force vector must match with the nodal dimension.")
+        self.force = ti.Vector(force, dt=ti.f64)
 
-    @x.setter
-    def x(self, val):
-        self._x = val
-        self.pos = [self._x,self._y,self._z]
+    def set_disp(self, *disp):
+        if len(disp) != self.dim:
+            raise AttributeError("The dimension of the displacement vector must match with the nodal dimension.")
+        self.disp = ti.Vector(disp, dt=ti.f64)
 
-    @property
-    def y(self):
-        return self._y
+    @ti.pyfunc
+    def set_ID(self, var):
+        self.ID = var
 
-    @y.setter
-    def y(self, val):
-        self._y = val
-        self.pos = [self._x,self._y,self._z]
-
-    @property
-    def z(self):
-        return self._z
-
-    @z.setter
-    def z(self, val):
-        self._z = val
-        self.pos = [self._x,self._y,self._z]
-
-    @property
-    def dofX(self):
-        return self._dofX
-
-    @dofX.setter
-    def dofX(self, bool):
-        self._dofX = bool
-
-    @property
-    def dofY(self):
-        return self._dofY
-
-    @dofY.setter
-    def dofY(self, bool):
-        self._dofY = bool
-
-    @property
-    def dofZ(self):
-        return self._dofZ
-
-    @dofZ.setter
-    def dofZ(self, bool):
-        self._dofZ = bool
-
-    @property
-    def ID(self):
-        return self._ID
-
-    @ID.setter
-    def ID(self, val):
-        self._ID = val
-
-    @property
-    def force(self):
-        return self._force
-
-    @property
-    def disp(self):
-        return self._disp
-
-    def init_pos(self, *pos):
-        self._x = 0.
-        self._y = 0.
-        self._z = 0.
-
-        if len(pos) == 1:
-            self.dim = len(pos[0])
-            if self.dim == 2:
-                self._x = pos[0][0] * 1.
-                self._y = pos[0][1] * 1.
-                self.pos = (self.x, self.y)
-            elif self.dim == 3:
-                self._x = pos[0][0] * 1.
-                self._y = pos[0][1] * 1.
-                self._z = pos[0][2] * 1.
-                self.pos = (self.x, self.y, self.z)
-            else:
-                raise AttributeError("Node dimension must be 2 or 3")
-
-        elif len(pos) == 2:
-            self.pos = tuple(pos)
-            self.dim = 2
-            self._x = pos[0] * 1.
-            self._y = pos[1] * 1.
-            self.pos = (self.x, self.y)
-        elif len(pos) == 3:
-            self.pos = tuple(pos)
-            self.dim = 3
-            self._x = pos[0] * 1.
-            self._y = pos[1] * 1.
-            self._z = pos[2] * 1.
-            self.pos = (self.x, self.y, self.z)
-        else:
-            raise AttributeError("Node dimension must be 2 or 3")
-
-    def set_dof(self):
-        self._dofX = False
-        self._dofY = False
-        self._dofZ = False
-
-    def set_force(self, force):
-            self._force = force
-
-    def clear_force(self):
-        self._force = []
-
-    def get_force(self):
-        return self._force
-
-    def set_disp(self, *disps):
-        for disp in disps:
-            self._disp += disp
-
-    def clear_disp(self):
-        self._force = []
-
-    def get_disp(self):
-        return self._disp
 
 if __name__ == '__main__':
+    ti.init()
     nd = Node(2,3,4)
     print(nd)
-    nd.y = 5.
-    print(nd)
-    nd.set_force([1,2,3])
+    nd.set_force(3,4,5)
     print(nd.force)
-    nd.ID = 4
+    nd.set_disp(0,1,0)
+    print(nd.disp)
+    nd.set_ID(4)
     print(nd.ID)
+    print(nd.dof)
+    nd[2]=0
+    print(nd)
+    nd2 = Node(2,3,0)
+    print(nd == nd2)
