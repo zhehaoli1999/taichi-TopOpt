@@ -19,7 +19,7 @@ Ke = np.zeros((8, 8))
 # for mgpcg
 n_mg_levels = 2
 pre_and_post_smoothing = 4
-bottom_smoothing = 50
+bottom_smoothing = 100
 use_multigrid = True
 
 A = []
@@ -35,36 +35,103 @@ fixed_dofs = list(range(0, 2 * (nely + 1), 2))
 fixed_dofs.append(2 * (nelx + 1) * (nely + 1) - 1)
 
 # Get free dofs
-all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
-free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)), dtype=int)
-n_freedof = len(free_dofs)
+# all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
+# free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)), dtype=int)
+# n_freedof = len(free_dofs)
 
 for l in range(n_mg_levels):
-    n_freedof_l = n_freedof // 2 ** l
+    nely_l = nely // 2**l
+    nelx_l = nelx // 2**l
 
-    A.append(np.zeros((n_freedof_l, n_freedof_l)))
-    r.append(np.zeros(n_freedof_l))
-    z.append(np.zeros(n_freedof_l))
-    b.append(np.zeros(n_freedof_l))
+    ndof_l = 2 * (nely_l + 1) * (nelx_l + 1)
+
+    A.append(np.zeros((ndof_l, ndof_l)))
+    r.append(np.zeros(ndof_l))
+    z.append(np.zeros(ndof_l))
+    b.append(np.zeros(ndof_l))
 
     if l >= 1:
-        Itp.append(np.zeros((n_freedof // 2 ** (l - 1), n_freedof // 2 ** l)))
+        Itp.append(np.zeros((ndof // 2 ** (l - 1), ndof // 2 ** l)))
     if l == 0:
         Itp.append(np.zeros(1))
 
-freedof_idx = free_dofs
+x = np.zeros(ndof)
+p = np.zeros(ndof)
+Ap = np.zeros(ndof)
 
-x = np.zeros(n_freedof)
-p = np.zeros(n_freedof)
-Ap = np.zeros(n_freedof)
+def check_is_free(l, node_x_l, node_y_l, add=0):
+    node_x = node_x_l * 2**l
+    node_y = node_y_l * 2**l
 
-# alpha = 0.
-# beta = 0.
+    dof_idx = 2 * (node_x * (nely + 1) + node_y) + add
+    if dof_idx in fixed_dofs:
+        return False
+    else:
+        return  True
 
-F[1] = -1.
-for l in range(n_mg_levels):
-    for i in range(n_freedof // 2 ** l):
-        b[l][i] = F[freedof_idx[i * 2 ** l]]  # sampling
+def init_Itp(l):
+
+    # initialize to be 0
+    for i in range(Itp[l].shape[0]):
+        for j in range(Itp[l].shape[1]):
+            Itp[l][i][j] = 0.
+
+    # Require: l >= 1
+    nely_2h = nely // 2**l
+    nelx_2h = nelx // 2**l
+
+    nely_h = nely // 2**(l-1)
+    nelx_h = nelx // 2 ** (l - 1)
+
+    dim = 2
+    for node_y_2h in range(nely_2h + 1):
+        for node_x_2h in range(nelx_2h + 1):
+            node_y_h = node_y_2h * 2 # Get node coordinate in level h
+            node_x_h = node_x_2h * 2
+
+            # get indices of dof
+            dof_idx_2h = [dim * (node_x_2h * (nely_2h + 1) + node_y_2h), dim * (node_x_2h * (nely_2h + 1) + node_y_2h) + 1]
+            dof_idx_h = [dim * (node_x_h * (nely_h + 1) + node_y_h), dim * (node_x_h * (nely_h + 1) + node_y_h) + 1]
+
+            # bilinear interpolation
+            # situation of weight = 1
+            for t in range(2):
+                # if dof_idx_h[t] in freedof_idx[l-1]: # check if node in level h is fixed
+                if check_is_free(l-1, node_x_h, node_y_h, t):
+                    Itp[l][dof_idx_h[t]][dof_idx_2h[t]] = 1.
+
+            # situation of weight = 1 / 2.
+            for i in [-1, +1]:
+                x, y = node_x_h + i, node_y_h
+                if 0 <= x < nelx_h:
+                    dof_h = [dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1]
+                    for t in range(2):
+                        # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
+                        if check_is_free(l - 1, x, y, t):
+                            Itp[l][dof_h[t]][dof_idx_2h[t]] = 1 / 2.
+
+            for j in [-1, +1]:
+                x, y = node_x_h, node_y_h + j
+                if 0 <= y < nely_h:
+                    dof_h = [dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1]
+                    for t in range(2):
+                        # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
+                        if check_is_free(l - 1, x, y, t):
+                            Itp[l][dof_h[t]][dof_idx_2h[t]] = 1 / 2.
+
+            # situation of weight = 1 / 4.
+            for i in [-1, +1]:
+                for j in [-1, +1]:
+                    x = node_x_h + i
+                    y = node_y_h + j
+                    if 0<= x < nelx_h and 0 <= y < nely_h:
+                        dof_h = [dim * (x* (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1]
+                        for t in range(2):
+                            # if dof_h[t] in freedof_idx[l-1]:
+                            if check_is_free(l - 1, x, y, t):
+                                Itp[l][dof_h[t]][dof_idx_2h[t]] = 1 / 4.
+
+
 
 
 def initialize():
@@ -73,17 +140,26 @@ def initialize():
         for j in range(ndof):
             rho[i][j] = volfrac
 
+    # 2. initialize Itp
+    for l in range(1, n_mg_levels):
+        init_Itp(l)
+
+    # 3. initialize F and b
+    F[1] = -1.
+    b[0] = F
+    for l in range(1, n_mg_levels):
+        b[l] = b[l - 1] @ Itp[l].transpose()  # TODO
+
+
 def mg_get_Kl(l):
     # Require l >= 1
-    # Use Garlekin coarsening: K[l+1] = R[l+1] @ K[l] @ I[l+1]
-    # R = transpose(I)
-    n1 = n_freedof // 2 ** (l - 1)
-    n2 = n_freedof // 2 ** l
-
+    # Use Garlekin coarsening: K[l+1] = R[l+1] @ K[l] @ I[l+1], where R = transpose(I)
     global A
 
     A[l] = Itp[l].transpose() @ A[l-1] @ Itp[l]
 
+    #     n1 = n_freedof // 2 ** (l - 1)
+    #     n2 = n_freedof // 2 ** l
     # for i in range(n2):
     #     for j in range(n2):
     #         A[l][i][j] = 0.
@@ -117,21 +193,11 @@ def assemble_K():
                     K[edof[i]][edof[j]] += rho[ely][elx] ** simp_penal * Ke[i][j]
 
     # 2. Get A[0]
-    for i in range(n_freedof):
-        for j in range(n_freedof):
-            A[0][i][j] = K[freedof_idx[i]][freedof_idx[j]]
-            # print(A[0][i][j])
-
-
-def backward_map_U():
-    # mapping x backward to U
-    for i in range(n_freedof):
-        idx = freedof_idx[i]
-        U[idx] = x[i]
+    A[0] = K
 
 
 def multigrid_init():
-    for I in range(n_freedof):
+    for I in range(ndof):
         r[0][I] = b[0][I]  # r = b - A * x = b
         z[0][I] = 0.0
         Ap[I] = 0.
@@ -139,50 +205,30 @@ def multigrid_init():
         x[I] = 0.
 
 
-def init_Itp(l):
-    # Require: l >= 1
-    n1 = n_freedof // 2 ** (l - 1)
-    n2 = n_freedof // 2 ** l
-
-    nely1 = int(np.sqrt(n1))
-    n_node1 = nely1 + 1
-
-    for i in range(Itp[l].shape[0]):
-        for j in range(Itp[l].shape[1]):
-            Itp[l][i][j] = 0.
-
-    for i in range(n2):
-        Itp[l][i * 2][i] = 1.
-
-        a = [i * 2 - 2, i * 2 + 2, i * 2 - n_node1, i * 2 + n_node1]
-        for t in range(4):
-            if 0 <= a[t] < n1:
-                Itp[l][a[t]][i] = 1 / 2.
-
-        # b = [i * 2 - n_node1 - 2, i * 2 - n_node1 + 2, i * 2 + n_node1 - 2, i * 2 + n_node1 + 2]
-        # for t in range(4):
-        #     if 0 <= b[t] < n1:
-        #         Itp[l][b[t]][i] = 1 / 4.
-
-
 def smooth(l):
     # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
-    n_freedof_l = n_freedof // 2 ** l
-    for i in range(n_freedof_l):
-        sigma = 0.
-        for j in range(n_freedof_l):
-            if j != i:
-                sigma += A[l][i][j] * z[l][j]
-            if A[l][i][i] != 0.:
-                z[l][i] = (r[l][i] - sigma) / A[l][i][i]
+    n_node_y_l = nely // 2**l + 1
+    n_node_x_l = nelx // 2**l + 1
+    for x in range(n_node_x_l):
+        for y in range(n_node_y_l):
+
+            # Get two dof
+            for t in range(2):
+                i = 2 * (x * n_node_y_l + y) + t
+                if check_is_free(l, x, y, t): # Check boundary condition
+                    sigma = 0.
+                    for j in range(A[l].shape[1]):
+                        if j != i:
+                            sigma += A[l][i][j] * z[l][j]
+                    if A[l][i][i] != 0.:
+                        z[l][i] = (r[l][i] - sigma) / A[l][i][i]
 
 
 def restrict(l):
     # calculate residual
-    n_freedof_l = n_freedof // 2 ** l
-    for i in range(n_freedof_l):
+    for i in range(A[l].shape[0]):
         sum = 0.
-        for j in range(n_freedof_l):
+        for j in range(A[l].shape[1]):
             sum += A[l][i][j] * z[l][j]
         r[l][i] = b[l][i] - sum  # get residual
 
@@ -195,9 +241,6 @@ def restrict(l):
 
 
 def prolongate(l):
-    n_freedof_l = n_freedof // 2 ** l
-    n_freedof_2l = n_freedof // 2 ** (l + 1)
-
     # interpolate coarse to fine
     # for i in range(n_freedof_l):
     #     for j in range(n_freedof_2l):
@@ -238,11 +281,11 @@ def apply_preconditioner():
 
 
 def cg_compute_Ap(A, p):
-    for I in range(n_freedof):
+    for I in range(ndof):
         Ap[I] = 0.
 
-    for i in range(n_freedof):
-        for j in range(n_freedof):
+    for i in range(ndof):
+        for j in range(ndof):
             Ap[i] += A[i][j] * p[j]
     # for i, j in ti.ndrange((n_freedof, n_freedof)): # error
 
@@ -261,12 +304,18 @@ def cg_update_p(beta):
 
 def cg_update_x(alpha):
     for i in  range(len(p)):
-        x[i] += alpha * p[i]
+        if i in fixed_dofs:
+            x[i] = 0.
+        else:
+            x[i] += alpha * p[i]
 
 
 def cg_update_r(alpha):
     for i in  range(len(p)):
-        r[0][i] -= alpha * Ap[i]
+        if i in fixed_dofs:
+            r[0][i] = 0.
+        else:
+            r[0][i] -= alpha * Ap[i]
 
 
 def mgpcg():
@@ -279,46 +328,40 @@ def mgpcg():
     multigrid_init()
     initial_rTr = reduce(r[0], r[0])  # Used to check convergence
 
-    for iter in range(100):
-        apply_preconditioner()
-        print(sum(r[0]))
+    if use_multigrid:
+        apply_preconditioner()  # Get z0 = M^-1 r0
+    else:
+        z[0] = r[0]
 
-    # if use_multigrid:
-    #     apply_preconditioner()  # Get z0 = M^-1 r0
-    # else:
-    #     z[0] = r[0]
-
-    # print(z[0])
-
-    # cg_update_p(beta=0.)  # p0 = z0
-    # old_zTr = reduce(r[0], z[0])
+    cg_update_p(beta=0.)  # p0 = z0
+    old_zTr = reduce(r[0], z[0])
 
     # cg iteration
-    # for iter in range(n_freedof + 50):
-    #     cg_compute_Ap(A[0], p)
-    #     pAp = reduce(p, Ap)
-    #
-    #     alpha = old_zTr / pAp
-    #
-    #     cg_update_x(alpha)  # x = x + alpha * p
-    #     cg_update_r(alpha)  # r = r - alpha * Ap
-    #
-    #     rTr = reduce(r[0], r[0])  # check convergence
-    #     print(f"mgpcg res: {rTr / initial_rTr}")
-    #     if rTr < initial_rTr * 1.0e-12:
-    #         break
-    #
-    #     if use_multigrid:
-    #         apply_preconditioner()  # update z:  z_{k+1} = M^-1 r_{k+1}
-    #     else:
-    #         z[0] = r[0]
-    #
-    #     new_zTr = reduce(r[0], z[0])
-    #
-    #     beta = new_zTr / old_zTr
-    #
-    #     cg_update_p(beta)
-    #     old_zTr = new_zTr
+    for iter in range(ndof + 50):
+        cg_compute_Ap(A[0], p)
+        pAp = reduce(p, Ap)
+
+        alpha = old_zTr / pAp
+
+        cg_update_x(alpha)  # x = x + alpha * p
+        cg_update_r(alpha)  # r = r - alpha * Ap
+
+        rTr = reduce(r[0], r[0])  # check convergence
+        print(f"mgpcg res: {rTr / initial_rTr}")
+        if rTr < initial_rTr * 1.0e-12:
+            break
+
+        if use_multigrid:
+            apply_preconditioner()  # update z:  z_{k+1} = M^-1 r_{k+1}
+        else:
+            z[0] = r[0]
+
+        new_zTr = reduce(r[0], z[0])
+
+        beta = new_zTr / old_zTr
+
+        cg_update_p(beta)
+        old_zTr = new_zTr
 
 
 def get_Ke():
@@ -344,8 +387,6 @@ if __name__ == '__main__':
     get_Ke()
 
     assemble_K()
-    for l in range(1, n_mg_levels):
-        init_Itp(l)
 
     for l in range(1, n_mg_levels):
         mg_get_Kl(l)
