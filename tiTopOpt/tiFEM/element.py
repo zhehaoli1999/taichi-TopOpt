@@ -5,23 +5,23 @@ from node import *
 class Element:
     def __init__(self, nodes, E=1., nu=0.3, t=1.):
         self.dim = nodes[0].dim
-        self.nodes = ti.field(dtype=ti.f64, shape=(len(nodes), self.dim)) # elemental nodes
+        self.nodes = ti.field(dtype=ti.f64, shape=(len(nodes), self.dim))  # elemental nodes
         self.nodeID = ti.field(dtype=ti.i32, shape=(len(nodes)))
         self.set_nodes(nodes)
         self.ID = None  # index
-        self.E =  E # Young's modulus
-        self.nu = nu # Possion's ratio
-        self.t = 1. # thickness
-        self.volume = None # volume
+        self.E =  E  # Young's modulus
+        self.nu = nu  # Possion's ratio
+        self.t = 1.  # thickness
+        self.volume = None  # volume
 
         self.ndof = len(nodes) * self.dim
 
-        self.D = ti.field(ti.f32, shape=(self.ndof, self.ndof))
+        self.D = ti.field(ti.f32, shape=(self.dim * 2, self.dim * 2))
         self.B = ti.field(ti.f32, shape=(self.ndof, self.ndof))
         self.J = ti.field(ti.f32, shape=(self.ndof, self.ndof))
-        self.Ke = ti.field(ti.f32, shape=(self.ndof, self.ndof)) # elemental stiffness matrix
-        self.Me = ti.field(ti.f32, shape=(self.ndof, self.ndof)) # elemental mass matrix
-        self.Xe = 1. # design variable
+        self.Ke = ti.field(ti.f32, shape=(self.ndof, self.ndof))  # elemental stiffness matrix
+        self.Me = ti.field(ti.f32, shape=(self.ndof, self.ndof))  # elemental mass matrix
+        self.Xe = 1.  # design variable
 
     @ti.pyfunc
     def set_nodes(self, nodes):

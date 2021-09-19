@@ -7,12 +7,12 @@ class Node(object):
     def __init__(self, *pos):
         if len(pos) != 2 and len(pos) != 3:
             raise AttributeError("Node dimension must be 2 or 3")
-        self.dim = len(pos) # dimension
+        self.dim = len(pos)  # dimension
         self.ID = None  # index
-        self.pos = ti.Vector(pos, dt=ti.f64) # position
-        self.force = ti.field(ti.f64, shape=self.dim) # force vector
-        self.disp = ti.field(ti.f64, shape=self.dim) # displacement vector
-        self.dof = ti.Vector(np.zeros(self.dim),dt=ti.f64) # degree-of-freedom
+        self.pos = ti.Vector(pos, dt=ti.f64)  # position
+        self.force = ti.field(ti.f64, shape=self.dim)  # force vector
+        self.disp = ti.field(ti.f64, shape=self.dim)  # displacement vector
+        self.dof = ti.Vector(np.zeros(self.dim),dt=ti.f64)  # degree-of-freedom
 
     def __repr__(self):
         return str(self.dim) + "D Node: " + str(self.pos)

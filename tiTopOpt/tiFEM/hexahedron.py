@@ -102,4 +102,5 @@ if __name__ == '__main__':
     ele = Hexahedron([a,b,c,d,e,f,g,h])
     print(ele.nodes)
     print(ele.ndof)
-    print(ele.B)
+    ele.calc_D()
+    print(ele.D)
