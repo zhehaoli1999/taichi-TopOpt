@@ -335,6 +335,7 @@ def mgpcg():
     :Reference https://github.com/taichi-dev/taichi/blob/master/examples/algorithm/mgpcg.py
 
     '''
+    print(f"mg level: {n_mg_levels}")
     multigrid_init()
     initial_rTr = reduce(r[0], r[0])  # Used to check convergence
 
@@ -408,3 +409,5 @@ if __name__ == '__main__':
         mg_get_Kl(l)
 
     mgpcg()
+    for i in range(ndof):
+        print(x[i])
