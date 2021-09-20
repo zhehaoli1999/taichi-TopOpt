@@ -150,7 +150,7 @@ if __name__ == '__main__':
     get_Ke()
     assemble_K()
 
-    solver = fem_mgpcg(nelx=nelx, nely=nely, fixed_dof=fixed_dofs_vec, K=K, F=F)
+    solver = fem_mgpcg(nelx=nelx, nely=nely, fixed_dofs=fixed_dofs_vec, K=K, F=F)
 
     change = 1.
 
@@ -161,7 +161,7 @@ if __name__ == '__main__':
         while change > 0.01:
             iter += 1
 
-            solver.solve()
+            solver.solve(U)
 
             get_dc()
             derivative_filter()
