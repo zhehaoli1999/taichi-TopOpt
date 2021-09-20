@@ -1,5 +1,6 @@
 import taichi as ti
 import numpy as np
+from solver import fem_mgpcg
 
 # ti.init(ti.cpu, kernel_profiler=True)
 ti.init(ti.cpu)
@@ -26,68 +27,19 @@ Ke = ti.field(ti.f32, shape=(8,8))
 
 dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
 
-# for mgpcg
-n_mg_levels = 2
-pre_and_post_smoothing = 4
-bottom_smoothing = 50
-use_multigrid = True
-
-K_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
-F_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
-
-r = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # residual
-z = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # M^-1 r
-
-Itp = [ti.field(dtype = ti.f32) for _ in range(n_mg_levels)] # interpolation operator #FIXME: [0] is useless
-
-# Set fixed nodes
+# set fixed dof
 fixed_dofs = list(range(0, 2 * (nely + 1), 2))
 fixed_dofs.append(2 * (nelx + 1) * (nely + 1) - 1)
+fixed_dofs_vec = ti.field(ti.f32, shape=(len(fixed_dofs)))
+fixed_dofs_vec.from_numpy(np.array(fixed_dofs))
 
-# Get free dofs
-all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
-free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)), dtype=int)
-n_freedof = len(free_dofs)
-
-
-for l in range(n_mg_levels):
-    n_freedof_l = n_freedof // 2**l
-
-    # Place taichi fields
-    ti.root.dense(ti.ij, (n_freedof_l, n_freedof_l)).place(K_freedof[l])
-    ti.root.dense(ti.i, n_freedof_l).place(r[l], z[l], F_freedof[l])
-    if l >= 1:
-        ti.root.dense(ti.ij, (n_freedof // 2 ** (l - 1), n_freedof // 2 ** l)).place(Itp[l])
-    if l == 0:
-        ti.root.dense(ti.ij,(1)).place(Itp[0]) #FIXME: useless
-
-
-
-freedof_idx = ti.field(ti.i32, shape=(n_freedof))
-freedof_idx.from_numpy(free_dofs)
-
-U_freedof = ti.field(dtype=ti.f32, shape=(n_freedof))
-
-p = ti.field(dtype=ti.f32, shape=(n_freedof))  # conjugate gradient
-Ap = ti.field(dtype=ti.f32, shape=(n_freedof))  # matrix-vector product
-
-alpha = ti.field(ti.f32)
-beta = ti.field(ti.f32)
-ti.root.place(alpha, beta)
-
-A, x, b = ti.static(K_freedof, U_freedof, F_freedof)  # variable alias
-
+# set force
 F[1] = -1.
-for l in range(n_mg_levels):
-    for i in range(n_freedof // 2 ** l):
-        F_freedof[l][i] = F[freedof_idx[i * 2 ** l]]  # sampling
 
 @ti.kernel
-def initialize():
-    # 1. initialize rho
+def init_rho():
     for I in ti.grouped(rho):
         rho[I] = volfrac
-    # 2. set boundary condition
 
 
 @ti.kernel
@@ -139,24 +91,6 @@ def derivative_filter():
         dc[ely, elx] = dc[ely, elx] / weight
 
 @ti.kernel
-def mg_get_Kl(l:ti.template()):
-    # Require l >= 1
-    # Use Garlekin coarsening: K[l+1] = R[l+1] @ K[l] @ I[l+1]
-    # R = transpose(I)
-    n1 = n_freedof // 2 ** (l - 1)
-    n2 = n_freedof // 2 ** l
-
-    for i, j in ti.ndrange(n2, n2):
-        K_freedof[l][i, j] = 0.
-        for t in range(n1):
-            s = 0.
-            for m in range(n1):
-                s += K_freedof[l - 1][t, m] * Itp[l][m, j]
-            s = s * Itp[l][i, t]
-            K_freedof[l][i, j] += s
-
-
-@ti.kernel
 def assemble_K():
     for I in ti.grouped(K):
         K[I] = 0.
@@ -169,201 +103,6 @@ def assemble_K():
 
         for i, j in ti.static(ti.ndrange(8, 8)):
             K[edof[i], edof[j]] += rho[ely, elx]**simp_penal * Ke[i, j]
-
-    # 2. Get K_freedof[0]
-    for i, j in ti.ndrange(n_freedof, n_freedof):
-        K_freedof[0][i, j] = K[freedof_idx[i], freedof_idx[j]]
-
-@ti.kernel
-def backward_map_U():
-    # mapping U_freedof backward to U
-    for i in range(n_freedof):
-        idx = freedof_idx[i]
-        U[idx] = U_freedof[i]
-
-@ti.kernel
-def multigrid_init():
-    for I in range(n_freedof):
-        r[0][I] = b[0][I]  # r = b - A * x = b
-        z[0][I] = 0.0
-        Ap[I] = 0.
-        p[I] = 0.
-        x[I] = 0.
-
-@ti.kernel
-def init_Itp(l: ti.template()):
-    # Require: l >= 1
-    n1 = n_freedof // 2**(l-1)
-    n2 = n_freedof // 2**l
-
-    nely1 = nely // 2**(l - 1)
-    n_node1 = nely1 + 1
-
-    for I in ti.grouped(Itp[l]):
-        Itp[l][I] = 0. 
-
-    for i in range(n2):
-        Itp[l][i* 2, i ] = 1.
-
-        a = ti.Vector([i* 2 - 2, i* 2 + 2, i*2 - n_node1, i*2 + n_node1])
-        for t in ti.static(range(4)):
-            if 0 <= a[t] < n1:
-                Itp[l][a[t] , i] = 1 / 2.
-     
-        b = ti.Vector([i*2 - n_node1 - 2, i*2 - n_node1 + 2, i*2 + n_node1 - 2, i*2 - n_node1 + 2])
-        for t in ti.static(range(4)):
-            if 0 <= b[t] < n1:
-                Itp[l][b[t], i] = 1 / 4.
-
-
-@ti.kernel
-def smooth(l: ti.template()):
-    # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
-    n_freedof_l = n_freedof // 2**l
-    for i in range(n_freedof_l):
-        sigma = 0.
-        for j in range(n_freedof_l):
-            if j != i :
-                sigma += A[l][i, j] * z[l][j]
-            if A[l][i, i] != 0.:
-                z[l][i] = (r[l][i] - sigma) / A[l][i, i]
-
-@ti.kernel
-def restrict(l: ti.template()):
-    # calculate residual
-    n_freedof_l = n_freedof // 2 ** l
-    for i in range(n_freedof_l):
-        sum = 0.
-        for j in range(n_freedof_l):
-            sum += A[l][i,j] * z[l][j]
-        r[l][i] = b[l][i] - sum # get residual
-
-    # down sample residual on fine grid to coarse grid
-    n_freedof_2l = n_freedof // 2**(l+1)
-    for i in range(n_freedof_2l):
-        for j in range(n_freedof_l):
-            r[l+1][i] += r[l][j] * Itp[l+1][j, i] # r[l+1] = r[l] @ I[l+1]
-
-
-@ti.kernel
-def prolongate(l: ti.template()):
-    n_freedof_l = n_freedof // 2 ** l
-    n_freedof_2l = n_freedof // 2 ** (l+1)
-
-    # interpolate coarse to fine
-    for i in range(n_freedof_l):
-        for j in range(n_freedof_2l):
-            z[l][i] = Itp[l+1][i, j] * z[l+1][j] # z[l] = I[l+1]^T @ z[l+1]
-
-
-def apply_preconditioner():
-    z[0].fill(0)
-    # print(z[0])
-    for l in range(n_mg_levels - 1):
-        for i in range(pre_and_post_smoothing << l): # equals to pre_and_post_smoothing // 2**l
-            smooth(l)
-            # print("============")
-            # print(z[0])
-        z[l + 1].fill(0)
-        r[l + 1].fill(0)
-        restrict(l)
-    # print("============")
-    # print(r[1])
-    for i in range(bottom_smoothing):
-        smooth(n_mg_levels - 1)
-    # print("============")
-    # print(A[1])
-    # print("============")
-    # print(z[1])
-    # print("============")
-    # print(z[0])
-    # print("============")
-    # print(z[1])
-
-    for l in reversed(range(n_mg_levels - 1)):
-        prolongate(l)
-        for i in range(pre_and_post_smoothing << l):
-            smooth(l)
-    # print("============")
-    # print(z[0])
-
-@ti.kernel
-def cg_compute_Ap(A: ti.template(), p:ti.template()):
-    for I in range(ndof):
-        Ap[I] = 0.
-
-    for i in range(ndof):
-        for j in range(ndof):
-            Ap[i] += A[i, j] * p[j]
-    # for i, j in ti.ndrange((n_freedof, n_freedof)): # error
-
-@ti.kernel
-def reduce(r1: ti.template(), r2: ti.template()) -> ti.f32:
-    result = 0.
-    for I in range(r1.shape[0]):
-        result += r1[I] * r2[I]  # dot
-    return result
-
-@ti.kernel
-def cg_update_p():
-    for I in ti.grouped(p):
-        p[I] = z[0][I] + beta[None] * p[I]
-
-@ti.kernel
-def cg_update_x():
-    for I in ti.grouped(p):
-        x[I] += alpha[None] * p[I]
-
-@ti.kernel
-def cg_update_r():
-    for I in ti.grouped(p):
-        r[0][I] -= alpha[None] * Ap[I]
-
-def mgpcg():
-    '''
-    :Reference https://en.wikipedia.org/wiki/Conjugate_gradient_method
-    :Reference https://en.wikipedia.org/wiki/Multigrid_method
-    :Reference https://github.com/taichi-dev/taichi/blob/master/examples/algorithm/mgpcg.py
-
-    '''
-
-    multigrid_init()
-    initial_rTr = reduce(r[0], r[0]) # Used to check convergence
-
-    if use_multigrid:
-        apply_preconditioner() # Get z0 = M^-1 r0
-    else:
-        z[0].copy_from(r[0])
-
-    # print(z[0])
-
-    cg_update_p() # p0 = z0
-    old_zTr = reduce(r[0], z[0])
-
-    # cg iteration
-    for iter in range(n_freedof + 50):
-        cg_compute_Ap(A[0], p)
-        pAp = reduce(p, Ap)
-        alpha[None] = old_zTr / pAp
-
-        cg_update_x() # x = x + alpha * p
-        cg_update_r() # r = r - alpha * Ap
-
-        rTr = reduce(r[0], r[0])  # check convergence
-        print(f"mgpcg res: {rTr / initial_rTr}")
-        if rTr < initial_rTr * 1.0e-12:
-            break
-
-        if use_multigrid:
-            apply_preconditioner()  #  update z:  z_{k+1} = M^-1 r_{k+1}
-        else:
-            z[0].copy_from(r[0])
-
-        new_zTr = reduce(r[0], z[0])
-        beta[None] = new_zTr / old_zTr
-
-        cg_update_p()
-        old_zTr = new_zTr
 
 def get_Ke():
     k = np.array(
@@ -380,7 +119,6 @@ def get_Ke():
                                          [k[7], k[2], k[1], k[4], k[3], k[6], k[5], k[0]]])
 
     Ke.from_numpy(Ke_)
-
 
 
 @ti.kernel
@@ -407,62 +145,40 @@ def get_dc():
 
 
 if __name__ == '__main__':
-    # window = ti.ui.Window('Taichi TopoOpt', (nelx , nely))
-    # while window.running:
-    #     canvas = window.get_canvas()
-        # canvas.set_background_color()
-
     gui = ti.GUI('Taichi TopoOpt', res=(gui_x, gui_y))
-    initialize()
+    init_rho()
     get_Ke()
+    assemble_K()
 
-    # print(K_freedof)
-    # print(U)
-    # print(display)
-    # print(dc)
+    solver = fem_mgpcg(nelx=nelx, nely=nely, fixed_dof=fixed_dofs_vec, K=K, F=F)
 
     change = 1.
 
-    assemble_K()
-    for l in range(1, n_mg_levels):
-        init_Itp(l)
-        
-    for l in range(1,n_mg_levels):
-        mg_get_Kl(l)
-    # print(F_freedof[0])
-    # print(K_freedof[1])
-    # print(K_freedof[0])
-    # print(K_freedof[1])
+    print(f"total dof = {ndof}")
+    while gui.running:
+        x_old = rho.to_numpy()
+        iter = 0
+        while change > 0.01:
+            iter += 1
 
-    # mgpcg()
-    # print(U_freedof)
-    # print(f"total dof = {ndof}")
-    # while gui.running:
-    #     x_old = rho.to_numpy()
-    #     iter = 0
-    #     while change > 0.01:
-    #         iter += 1
-    #
-    #         for l in range(n_mg_levels):
-    #             mg_assemble_K(l)
-    #         mgpcg()
-    #         backward_map_U()
-    #         get_dc()
-    #         derivative_filter()
-    #
-    #         x = OC()
-    #         volume = sum(sum(x)) / (nely * nelx)
-    #         change = np.max(np.abs(x - x_old))
-    #
-    #         print(f"iter: {iter}, volume = {volume}, change = {change}")
-    #
-    #         x_old = x
-    #
-    #         rho.from_numpy(x)
-    #         display_sampling()
-    #
-    #         gui.set_image(display)
-    #         gui.show()
+            solver.solve()
+
+            get_dc()
+            derivative_filter()
+
+            x = OC()
+            volume = sum(sum(x)) / (nely * nelx)
+            change = np.max(np.abs(x - x_old))
+
+            print(f"iter: {iter}, volume = {volume}, change = {change}")
+
+            x_old = x
+
+            rho.from_numpy(x)
+            display_sampling()
+
+            gui.set_image(display)
+            gui.show()
 
             # ti.print_kernel_profile_info()
 
