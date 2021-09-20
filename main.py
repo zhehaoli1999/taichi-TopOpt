@@ -29,7 +29,7 @@ dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
 # for mgpcg
 n_mg_levels = 2
 pre_and_post_smoothing = 4
-bottom_smoothing = 5
+bottom_smoothing = 50
 use_multigrid = True
 
 K_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
@@ -37,6 +37,8 @@ F_freedof = [ti.field(ti.f32) for _ in range(n_mg_levels)]
 
 r = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # residual
 z = [ti.field(dtype=ti.f32) for _ in range(n_mg_levels)]  # M^-1 r
+
+Itp = [ti.field(dtype = ti.f32) for _ in range(n_mg_levels)] # interpolation operator #FIXME: [0] is useless
 
 # Set fixed nodes
 fixed_dofs = list(range(0, 2 * (nely + 1), 2))
@@ -54,6 +56,11 @@ for l in range(n_mg_levels):
     # Place taichi fields
     ti.root.dense(ti.ij, (n_freedof_l, n_freedof_l)).place(K_freedof[l])
     ti.root.dense(ti.i, n_freedof_l).place(r[l], z[l], F_freedof[l])
+    if l >= 1:
+        ti.root.dense(ti.ij, (n_freedof // 2 ** (l - 1), n_freedof // 2 ** l)).place(Itp[l])
+    if l == 0:
+        ti.root.dense(ti.ij,(1)).place(Itp[0]) #FIXME: useless
+
 
 
 freedof_idx = ti.field(ti.i32, shape=(n_freedof))
@@ -131,41 +138,23 @@ def derivative_filter():
 
         dc[ely, elx] = dc[ely, elx] / weight
 
-# @ti.kernel
-# def assemble_K():
-#     for I in ti.grouped(K):
-#         K[I] = 0.
-#
-#     # 1. Assemble Stiffness Matrix
-#     for ely, elx in ti.ndrange(nely, nelx):
-#         n1 = (nely + 1) * elx + ely + 1
-#         n2 = (nely + 1) * (elx + 1) + ely + 1
-#         edof = ti.Vector([2*n1 -2, 2*n1 -1, 2*n2 -2, 2*n2 -1, 2*n2, 2*n2+1, 2*n1, 2*n1+1])
-#
-#         for i, j in ti.static(ti.ndrange(8, 8)):
-#             K[edof[i], edof[j]] += rho[ely, elx]**simp_penal * Ke[i, j]
-#
-#     # 2. Get K_freedof
-#     for i, j in ti.ndrange(n_freedof,n_freedof):
-#         K_freedof[i, j] = K[freedof_idx[i], freedof_idx[j]]
-
-@ti.func
-def clamp_K_freedof(l:ti.template(), i, j):
-    n = n_freedof // 2**l
-    return K_freedof[l][i, j] if 0 <= i < n and 0 <= j < n else 0.
-
 @ti.kernel
-def mg_assemble_Kl(l:ti.template()):
-    # 3. Sample from K_freedof[0] to get K_freedof[1 ~ n_mg_level - 1]
-    n_freedof_l = n_freedof // 2 ** l
-    for i, j in ti.ndrange(n_freedof_l, n_freedof_l):
-        x = i * 2
-        y = j * 2
-        K_freedof[l][i, j] = (clamp_K_freedof(l - 1, x, y) + \
-                              clamp_K_freedof(l - 1, x - 1, y) + \
-                              clamp_K_freedof(l - 1, x, y - 1) + \
-                              clamp_K_freedof(l - 1, x + 1, y) + \
-                              clamp_K_freedof(l - 1, x, y + 1)) / 5.  # TODO: change weight!
+def mg_get_Kl(l:ti.template()):
+    # Require l >= 1
+    # Use Garlekin coarsening: K[l+1] = R[l+1] @ K[l] @ I[l+1]
+    # R = transpose(I)
+    n1 = n_freedof // 2 ** (l - 1)
+    n2 = n_freedof // 2 ** l
+
+    for i, j in ti.ndrange(n2, n2):
+        K_freedof[l][i, j] = 0.
+        for t in range(n1):
+            s = 0.
+            for m in range(n1):
+                s += K_freedof[l - 1][t, m] * Itp[l][m, j]
+            s = s * Itp[l][i, t]
+            K_freedof[l][i, j] += s
+
 
 @ti.kernel
 def assemble_K():
@@ -179,7 +168,7 @@ def assemble_K():
         edof = ti.Vector([2*n1 -2, 2*n1 -1, 2*n2 -2, 2*n2 -1, 2*n2, 2*n2+1, 2*n1, 2*n1+1])
 
         for i, j in ti.static(ti.ndrange(8, 8)):
-            K[edof[i], edof[j]] += rho[ely, elx]**simp_penal * Ke[i, j] #FIXME problem with round error
+            K[edof[i], edof[j]] += rho[ely, elx]**simp_penal * Ke[i, j]
 
     # 2. Get K_freedof[0]
     for i, j in ti.ndrange(n_freedof, n_freedof):
@@ -202,6 +191,32 @@ def multigrid_init():
         x[I] = 0.
 
 @ti.kernel
+def init_Itp(l: ti.template()):
+    # Require: l >= 1
+    n1 = n_freedof // 2**(l-1)
+    n2 = n_freedof // 2**l
+
+    nely1 = nely // 2**(l - 1)
+    n_node1 = nely1 + 1
+
+    for I in ti.grouped(Itp[l]):
+        Itp[l][I] = 0. 
+
+    for i in range(n2):
+        Itp[l][i* 2, i ] = 1.
+
+        a = ti.Vector([i* 2 - 2, i* 2 + 2, i*2 - n_node1, i*2 + n_node1])
+        for t in ti.static(range(4)):
+            if 0 <= a[t] < n1:
+                Itp[l][a[t] , i] = 1 / 2.
+     
+        b = ti.Vector([i*2 - n_node1 - 2, i*2 - n_node1 + 2, i*2 + n_node1 - 2, i*2 - n_node1 + 2])
+        for t in ti.static(range(4)):
+            if 0 <= b[t] < n1:
+                Itp[l][b[t], i] = 1 / 4.
+
+
+@ti.kernel
 def smooth(l: ti.template()):
     # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
     n_freedof_l = n_freedof // 2**l
@@ -212,10 +227,6 @@ def smooth(l: ti.template()):
                 sigma += A[l][i, j] * z[l][j]
             if A[l][i, i] != 0.:
                 z[l][i] = (r[l][i] - sigma) / A[l][i, i]
-
-@ti.func
-def clamp_vec(v: ti.template(), l: ti.template(), i):
-    return v[l][i] if 0 <= i < n_freedof // 2**l else 0.
 
 @ti.kernel
 def restrict(l: ti.template()):
@@ -230,17 +241,19 @@ def restrict(l: ti.template()):
     # down sample residual on fine grid to coarse grid
     n_freedof_2l = n_freedof // 2**(l+1)
     for i in range(n_freedof_2l):
-        ii = i * 2
-        r[l + 1][i] = clamp_vec(r, l, ii)
-        # r[l+1][i] = (clamp_vec(r, l, ii) + clamp_vec(r, l, ii-1) + clamp_vec(r, l, ii+1)) / 3. #TODO change weight
+        for j in range(n_freedof_l):
+            r[l+1][i] += r[l][j] * Itp[l+1][j, i] # r[l+1] = r[l] @ I[l+1]
+
 
 @ti.kernel
 def prolongate(l: ti.template()):
     n_freedof_l = n_freedof // 2 ** l
+    n_freedof_2l = n_freedof // 2 ** (l+1)
 
     # interpolate coarse to fine
     for i in range(n_freedof_l):
-        z[l][i] = clamp_vec(z, l + 1, i // 2)  # sampling for interpolation
+        for j in range(n_freedof_2l):
+            z[l][i] = Itp[l+1][i, j] * z[l+1][j] # z[l] = I[l+1]^T @ z[l+1]
 
 
 def apply_preconditioner():
@@ -411,14 +424,17 @@ if __name__ == '__main__':
     change = 1.
 
     assemble_K()
+    for l in range(1, n_mg_levels):
+        init_Itp(l)
+        
     for l in range(1,n_mg_levels):
-        mg_assemble_Kl(l)
+        mg_get_Kl(l)
     # print(F_freedof[0])
     # print(K_freedof[1])
     # print(K_freedof[0])
     # print(K_freedof[1])
 
-    mgpcg()
+    # mgpcg()
     # print(U_freedof)
     # print(f"total dof = {ndof}")
     # while gui.running:
