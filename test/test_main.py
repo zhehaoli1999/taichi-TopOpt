@@ -1,6 +1,6 @@
 import numpy as np
 
-nely = 4
+nely = 16
 nelx = 2 * nely
 n_node = (nelx + 1) * (nely + 1)
 ndof = 2 * n_node
@@ -17,7 +17,7 @@ U = np.zeros(ndof)
 Ke = np.zeros((8, 8))
 
 # for mgpcg
-n_mg_levels = 1
+n_mg_levels = 4
 pre_and_post_smoothing = 4
 bottom_smoothing = 50
 use_multigrid = True
@@ -242,7 +242,7 @@ def restrict(l):
                     sum = 0.
                     for j in range(A[l].shape[1]):
                         sum += A[l][i][j] * z[l][j]
-                    r[l][i] = b[l][i] - sum  # get residual
+                    r[l][i] = r[l][i] - sum  # get residual
                 else:
                     r[l][i] = 0.
 
