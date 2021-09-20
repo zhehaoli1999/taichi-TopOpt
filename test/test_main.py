@@ -17,9 +17,9 @@ U = np.zeros(ndof)
 Ke = np.zeros((8, 8))
 
 # for mgpcg
-n_mg_levels = 2
+n_mg_levels = 1
 pre_and_post_smoothing = 4
-bottom_smoothing = 100
+bottom_smoothing = 50
 use_multigrid = True
 
 A = []
@@ -51,7 +51,10 @@ for l in range(n_mg_levels):
     b.append(np.zeros(ndof_l))
 
     if l >= 1:
-        Itp.append(np.zeros((ndof // 2 ** (l - 1), ndof // 2 ** l)))
+        nely1 = nely // 2 ** (l-1)
+        nelx1 = nelx // 2 ** (l-1)
+        ndof1 = 2 * (nely1 + 1) * (nelx1 + 1)
+        Itp.append(np.zeros((ndof1, ndof_l)))
     if l == 0:
         Itp.append(np.zeros(1))
 
@@ -148,7 +151,7 @@ def initialize():
     F[1] = -1.
     b[0] = F
     for l in range(1, n_mg_levels):
-        b[l] = b[l - 1] @ Itp[l].transpose()  # TODO
+        b[l] = b[l - 1] @ Itp[l] # TODO
 
 
 def mg_get_Kl(l):
@@ -204,7 +207,6 @@ def multigrid_init():
         p[I] = 0.
         x[I] = 0.
 
-
 def smooth(l):
     # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
     n_node_y_l = nely // 2**l + 1
@@ -222,15 +224,27 @@ def smooth(l):
                             sigma += A[l][i][j] * z[l][j]
                     if A[l][i][i] != 0.:
                         z[l][i] = (r[l][i] - sigma) / A[l][i][i]
+                else:
+                    z[l][i] = 0.
 
 
 def restrict(l):
     # calculate residual
-    for i in range(A[l].shape[0]):
-        sum = 0.
-        for j in range(A[l].shape[1]):
-            sum += A[l][i][j] * z[l][j]
-        r[l][i] = b[l][i] - sum  # get residual
+    n_node_y_l = nely // 2 ** l + 1
+    n_node_x_l = nelx // 2 ** l + 1
+    for x in range(n_node_x_l):
+        for y in range(n_node_y_l):
+
+            # Get two dof
+            for t in range(2):
+                i = 2 * (x * n_node_y_l + y) + t
+                if check_is_free(l, x, y, t):  # Check boundary condition
+                    sum = 0.
+                    for j in range(A[l].shape[1]):
+                        sum += A[l][i][j] * z[l][j]
+                    r[l][i] = b[l][i] - sum  # get residual
+                else:
+                    r[l][i] = 0.
 
     # down sample residual on fine grid to coarse grid
     # n_freedof_2l = n_freedof // 2 ** (l + 1)
@@ -250,7 +264,6 @@ def prolongate(l):
 
 def apply_preconditioner():
     z[0].fill(0)
-    # print(z[0])
     for l in range(n_mg_levels - 1):
         for i in range(pre_and_post_smoothing << l):  # equals to pre_and_post_smoothing // 2**l
             smooth(l)
@@ -276,9 +289,6 @@ def apply_preconditioner():
         prolongate(l)
         for i in range(pre_and_post_smoothing << l):
             smooth(l)
-    # print("============")
-    # print(z[0])
-
 
 def cg_compute_Ap(A, p):
     for I in range(ndof):
@@ -335,6 +345,12 @@ def mgpcg():
 
     cg_update_p(beta=0.)  # p0 = z0
     old_zTr = reduce(r[0], z[0])
+
+    # for iter in range(ndof+50):
+    #     xold = x
+    # #     # print(z[0])
+    #     apply_preconditioner()
+    #     print(np.linalg.norm(xold - x))
 
     # cg iteration
     for iter in range(ndof + 50):
