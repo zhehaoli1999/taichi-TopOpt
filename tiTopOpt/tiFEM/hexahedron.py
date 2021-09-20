@@ -9,13 +9,10 @@ class Hexahedron(Element):
         Element.__init__(self, nodes)
         self.E = E
         self.nu = nu
-
-    def init_keys(self):
-        self.set_eIk(("sx", "sy", "sz", "sxy", "syz", "szx"))
-
-    def init_unknowns(self):
-        for nd in self.nodes:
-            nd.init_unknowns("Ux", "Uy", "Uz")
+        self.ndof = 3
+        self.D = ti.field(ti.f32, shape=(6, 6))
+        self.B = ti.field(ti.f32, shape=(6, len(nodes) * self.ndof))
+        self.J = ti.field(ti.f32, shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
 
     def calc_D(self):
         a = self.E / ((1. + self.nu) * (1. - 2. * self.nu))
@@ -86,6 +83,7 @@ class Hexahedron(Element):
              [Nz[0], 0, Nx[0], Nz[1], 0, Nx[1], Nz[2], 0, Nx[2], Nz[3], 0, Nx[3], Nz[4], 0, Nx[4], Nz[5], 0, Nx[5],
               Nz[6],
               0, Nx[6], Nz[7], 0, Nx[7]]])
+        print(B.shape)
         self.B.from_numpy(B)
 
 
@@ -104,3 +102,5 @@ if __name__ == '__main__':
     print(ele.ndof)
     ele.calc_D()
     print(ele.D)
+    ele.calc_B()
+    print(ele.B)

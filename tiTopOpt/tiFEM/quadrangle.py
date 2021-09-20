@@ -1,4 +1,4 @@
-from elementpy import *
+from element import *
 
 
 class Quadrangle(Element):
@@ -8,20 +8,17 @@ class Quadrangle(Element):
         Element.__init__(self, nodes)
         self.E = E
         self.nu = nu
-
-    def init_keys(self):
-        self.set_eIk(("sx", "sy", "sxy"))
-
-    def init_unknowns(self):
-        for nd in self.nodes:
-            nd.init_unknowns("Ux", "Uy")
-        self._ndof = 2
+        self.ndof = 2
+        self.D = ti.field(ti.f32, shape=(3, 3))
+        self.B = ti.field(ti.f32, shape=(3, len(nodes) * self.ndof))
+        self.J = ti.field(ti.f32, shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
 
     def calc_D(self):
         a = self.E / (1 - self.nu ** 2)
-        self._D = a * np.array([[1., self.nu, 0.],
+        D = a * np.array([[1., self.nu, 0.],
                           [self.nu, 1., 0.],
                           [0., 0., (1 - self.nu) / 2.]])
+        self.D.from_numpy(D)
 
     def calc_B(self, *intv_pts):
         s = intv_pts[0] * 1.0
@@ -62,9 +59,9 @@ class Quadrangle(Element):
 
         X = np.array([x1, x2, x3, x4])
         Y = np.array([y1, y2, y3, y4]).reshape(4, 1)
-        _J = np.array([[0, 1 - t, t - s, s - 1],
+        J = np.array([[0, 1 - t, t - s, s - 1],
                        [t - 1, 0, s + 1, -s - t],
                        [s - t, -s - 1, 0, t + 1],
                        [1 - s, s + t, -t - 1, 0]])
-        self._J = np.dot(np.dot(X, _J), Y) / 8.
+        self.J = np.dot(np.dot(X, J), Y) / 8.
 
