@@ -2,14 +2,14 @@ import taichi as ti
 import numpy as np
 from solver import fem_mgpcg
 
-# ti.init(ti.cpu, kernel_profiler=True)
 ti.init(ti.cpu)
+# ti.init(ti.cpu)
 
 gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
 
-nely = 8
+nely = 10
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -161,7 +161,7 @@ if __name__ == '__main__':
         while change > 0.01:
             iter += 1
 
-            solver.solve(U)
+            solver.solve(U, verbose=False)
 
             get_dc()
             derivative_filter()

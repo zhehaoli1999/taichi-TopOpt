@@ -1,4 +1,5 @@
 import taichi as ti
+from utils import *
 
 @ti.data_oriented
 class fem_mgpcg:
@@ -62,8 +63,6 @@ class fem_mgpcg:
 
         print("mgpcg solver initialized")
 
-
-
     @ti.func
     def is_in(self, num, array):
         ans = 0
@@ -96,9 +95,8 @@ class fem_mgpcg:
         Set Interploation matrix with bilinear interpolation rules.
         '''
         # initialize to be 0
-        for i in range(self.Itp[l].shape[0]):
-            for j in range(self.Itp[l].shape[1]):
-                self.Itp[l][i, j] = 0.
+        for I in ti.grouped(self.Itp[l]):
+            self.Itp[l][I] = 0.
 
         nely_2h = self.nely // 2 ** (l + 1)
         nelx_2h = self.nelx // 2 ** (l + 1)
@@ -107,59 +105,58 @@ class fem_mgpcg:
         nelx_h = self.nelx // 2 ** l
 
         dim = 2
-        for node_y_2h in range(nely_2h + 1):
-            for node_x_2h in range(nelx_2h + 1):
-                node_y_h = node_y_2h * 2  # Get node coordinate in level h
-                node_x_h = node_x_2h * 2
+        v = ti.Vector([-1, +1])
+        for node_y_2h, node_x_2h  in ti.ndrange(nely_2h + 1, nelx_2h + 1):
+            node_y_h = node_y_2h * 2  # Get node coordinate in level h
+            node_x_h = node_x_2h * 2
 
-                # get indices of dof
-                dof_idx_2h = ti.Vector([dim * (node_x_2h * (nely_2h + 1) + node_y_2h), \
-                                        dim * (node_x_2h * (nely_2h + 1) + node_y_2h) + 1])
-                dof_idx_h = ti.Vector([dim * (node_x_h * (nely_h + 1) + node_y_h), \
-                                       dim * (node_x_h * (nely_h + 1) + node_y_h) + 1])
+            # get indices of dof
+            dof_idx_2h = ti.Vector([dim * (node_x_2h * (nely_2h + 1) + node_y_2h), \
+                                    dim * (node_x_2h * (nely_2h + 1) + node_y_2h) + 1])
+            dof_idx_h = ti.Vector([dim * (node_x_h * (nely_h + 1) + node_y_h), \
+                                   dim * (node_x_h * (nely_h + 1) + node_y_h) + 1])
 
-                # bilinear interpolation
-                # situation of weight = 1
-                for t in ti.static(range(2)):
-                    # if dof_idx_h[t] in freedof_idx[l-1]: # check if node in level h is fixed
-                    if self.check_is_free(l, node_x_h, node_y_h, t):
-                        self.Itp[l][dof_idx_h[t], dof_idx_2h[t]] = 1.
+            # bilinear interpolation
+            # situation of weight = 1
+            for t in ti.static(range(2)):
+                # if dof_idx_h[t] in freedof_idx[l-1]: # check if node in level h is fixed
+                if self.check_is_free(l, node_x_h, node_y_h, t):
+                    self.Itp[l][dof_idx_h[t], dof_idx_2h[t]] = 1.
 
-                # situation of weight = 1 / 2.
-                v = ti.Vector([-1, +1])
-                # for i in ti.Vector([-1, +1]):  #FIXME: a bug to report "TypeError: Can only iterate through Taichi fields/snodes (via template) or dense arrays (via any_arr)"
-                for ii in ti.static(range(2)):
+            # situation of weight = 1 / 2.
+            # for i in ti.Vector([-1, +1]):  #FIXME: a bug to report "TypeError: Can only iterate through Taichi fields/snodes (via template) or dense arrays (via any_arr)"
+            for ii in ti.static(range(2)):
+                i = v[ii]
+                x, y = node_x_h + i, node_y_h
+                if 0 <= x < nelx_h:
+                    dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
+                    for t in ti.static(range(2)):
+                        # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
+                        if self.check_is_free(l, x, y, t):
+                            self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 2.
+
+            for jj in ti.static(range(2)):
+                j = v[jj]
+                x, y = node_x_h, node_y_h + j
+                if 0 <= y < nely_h:
+                    dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
+                    for t in ti.static(range(2)):
+                        # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
+                        if self.check_is_free(l, x, y, t):
+                            self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 2.
+
+            # situation of weight = 1 / 4.
+            for ii, jj in ti.static(ti.ndrange(2,2)):
                     i = v[ii]
-                    x, y = node_x_h + i, node_y_h
-                    if 0 <= x < nelx_h:
-                        dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
-                        for t in ti.static(range(2)):
-                            # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
-                            if self.check_is_free(l, x, y, t):
-                                self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 2.
-
-                for jj in ti.static(range(2)):
                     j = v[jj]
-                    x, y = node_x_h, node_y_h + j
-                    if 0 <= y < nely_h:
+                    x = node_x_h + i
+                    y = node_y_h + j
+                    if 0 <= x < nelx_h and 0 <= y < nely_h:
                         dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
                         for t in ti.static(range(2)):
-                            # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
+                            # if dof_h[t] in freedof_idx[l-1]:
                             if self.check_is_free(l, x, y, t):
-                                self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 2.
-
-                # situation of weight = 1 / 4.
-                for ii, jj in ti.static(ti.ndrange(2,2)):
-                        i = v[ii]
-                        j = v[jj]
-                        x = node_x_h + i
-                        y = node_y_h + j
-                        if 0 <= x < nelx_h and 0 <= y < nely_h:
-                            dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
-                            for t in ti.static(range(2)):
-                                # if dof_h[t] in freedof_idx[l-1]:
-                                if self.check_is_free(l, x, y, t):
-                                    self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 4.
+                                self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 4.
 
     @ti.kernel
     def get_kl(self, l: ti.template()):
@@ -182,9 +179,8 @@ class fem_mgpcg:
 
     @ti.kernel
     def set_A0(self, K: ti.template()):
-        for i in range(self.ndof):
-            for j in range(self.ndof):
-                self.A[0][i, j] = K[i, j]
+        for i, j in ti.ndrange(self.ndof, self.ndof):
+            self.A[0][i, j] = K[i, j]
 
     @ti.kernel
     def set_b(self, F: ti.template()):
@@ -205,51 +201,50 @@ class fem_mgpcg:
         # Gauss-Seidel #TODO: red-black GS or Jacobi for parallelization
         n_node_y_l = self.nely // 2 ** l + 1
         n_node_x_l = self.nelx // 2 ** l + 1
-        for x in range(n_node_x_l):
-            for y in range(n_node_y_l):
-
-                # Get two dof
-                for t in range(2):
-                    i = 2 * (x * n_node_y_l + y) + t
-                    if self.check_is_free(l, x, y, t):  # Check boundary condition
-                        sigma = 0.
-                        for j in range(self.A[l].shape[1]):
-                            if j != i:
-                                sigma += self.A[l][i, j] * self.z[l][j]
-                        if self.A[l][i, i] != 0.:
-                            self.z[l][i] = (self.r[l][i] - sigma) / self.A[l][i,i]
-                    else:
-                        self.z[l][i] = 0.
+        for x, y in ti.ndrange(n_node_x_l, n_node_y_l):
+            # Get two dof
+            for t in range(2):
+                i = 2 * (x * n_node_y_l + y) + t
+                if self.check_is_free(l, x, y, t):  # Check boundary condition
+                    sigma = 0.
+                    for j in range(self.A[l].shape[1]):
+                        if j != i:
+                            sigma += self.A[l][i, j] * self.z[l][j]
+                    if self.A[l][i, i] != 0.:
+                        self.z[l][i] = (self.r[l][i] - sigma) / self.A[l][i,i]
+                else:
+                    self.z[l][i] = 0.
 
     @ti.kernel
     def restrict(self, l: ti.template()):
         # 1. calculate residual
         n_node_y_l = self.nely // 2 ** l + 1
         n_node_x_l = self.nelx // 2 ** l + 1
-        for x in range(n_node_x_l):
-            for y in range(n_node_y_l):
-
-                # Get two dof
-                for t in range(2):
-                    i = 2 * (x * n_node_y_l + y) + t
-                    if self.check_is_free(l, x, y, t):  # Check boundary condition
-                        sum = 0.
-                        for j in range(self.A[l].shape[1]):
-                            sum += self.A[l][i, j] * self.z[l][j]
-                        self.r[l][i] = self.r[l][i] - sum  # get residual, Note: should not be r[l][i] = b[l][i] - sum
-                    else:
-                        self.r[l][i] = 0.
+        for x, y in ti.ndrange(n_node_x_l, n_node_y_l):
+            # Get two dof
+            for t in range(2):
+                i = 2 * (x * n_node_y_l + y) + t
+                if self.check_is_free(l, x, y, t):  # Check boundary condition
+                    sum = 0.
+                    for j in range(self.A[l].shape[1]):
+                        sum += self.A[l][i, j] * self.z[l][j]
+                    self.r[l][i] = self.r[l][i] - sum  # get residual, Note: should not be r[l][i] = b[l][i] - sum
+                else:
+                    self.r[l][i] = 0.
 
         # 2. down sample residual on fine grid to coarse grid
         for i in range(self.r[l + 1].shape[0]):
+            self.r[l + 1][i] = 0.
             for j in range(self.r[l].shape[0]):
                 self.r[l + 1][i] += self.r[l][j] * self.Itp[l][j, i]  # r[l+1] = r[l] @ I[l]
 
     @ti.kernel
     def prolongate(self, l: ti.template()):
         for i in range(self.z[l].shape[0]):
+            self.z[l][i] = 0.
             for j in range(self.z[l + 1].shape[0]):
-                self.z[l][i] = self.Itp[l][i, j] * self.z[l + 1][j]  # z[l] = z[l+1] @ I[l]^T
+                self.z[l][i] += self.Itp[l][i, j] * self.z[l + 1][j]  # z[l] = z[l+1] @ I[l]^T
+
 
     def apply_preconditioner(self):
         # V-cycle multigrid
