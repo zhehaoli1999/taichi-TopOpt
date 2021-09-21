@@ -1,6 +1,6 @@
 import numpy as np
 
-nely = 16
+nely = 4
 nelx = 2 * nely
 n_node = (nelx + 1) * (nely + 1)
 ndof = 2 * n_node
@@ -261,6 +261,7 @@ def prolongate(l):
     #         z[l][i] = Itp[l + 1][i][j] * z[l + 1][j]  # z[l] = z[l+1] @ I[l+1]^T
 
     z[l] = z[l+1] @ Itp[l+1].transpose()
+    pass
 
 def apply_preconditioner():
     z[0].fill(0)
@@ -272,10 +273,11 @@ def apply_preconditioner():
         z[l + 1].fill(0)
         r[l + 1].fill(0)
         restrict(l)
-    # print("============")
-    # print(r[1])
     for i in range(bottom_smoothing):
         smooth(n_mg_levels - 1)
+
+    print(z[n_mg_levels - 1])
+    print("======================")
     # print("============")
     # print(A[1])
     # print("============")
@@ -287,6 +289,7 @@ def apply_preconditioner():
 
     for l in reversed(range(n_mg_levels - 1)):
         prolongate(l)
+        print(z[l])
         for i in range(pre_and_post_smoothing << l):
             smooth(l)
 
@@ -354,7 +357,8 @@ def mgpcg():
     #     print(np.linalg.norm(xold - x))
 
     # cg iteration
-    for iter in range(ndof + 50):
+    for iter in range(1):
+    # for iter in range(ndof + 50):
         cg_compute_Ap(A[0], p)
         pAp = reduce(p, Ap)
 
