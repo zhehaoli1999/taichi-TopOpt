@@ -1,7 +1,7 @@
 from element import *
+from intergration import *
 
 
-@ti.data_oriented
 class Hexahedron(Element):
     def __init__(self, nodes, E=1., nu=0.3):
         if len(nodes) != 8:
@@ -10,9 +10,7 @@ class Hexahedron(Element):
         self.E = E
         self.nu = nu
         self.ndof = 3
-        self.D = ti.field(ti.f32, shape=(6, 6))
-        self.B = ti.field(ti.f32, shape=(6, len(nodes) * self.ndof))
-        self.J = ti.field(ti.f32, shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
+        self.Ke = np.zeros(shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
 
     def calc_D(self):
         a = self.E / ((1. + self.nu) * (1. - 2. * self.nu))
@@ -86,9 +84,16 @@ class Hexahedron(Element):
         print(B.shape)
         self.B.from_numpy(B)
 
+    def calc_Ke(self):
+        self.calc_D()
+        glq = Intergration(2) # 2 sample points
+        for i in range(len(glq.Xi)):
+            for j in range(len(glq.Xi)):
+                self.calc_B(glq.Xi[i], glq.Xi[j])
+                self.Ke += glq.w[i] * glq.w[j] *  np.dot(np.dot(self.B.T, self.D), self.B) * self.J
+
 
 if __name__ == '__main__':
-    ti.init()
     a = Node(0,0,0)
     b = Node(1,0,0)
     c = Node(1,1,0)
@@ -102,5 +107,5 @@ if __name__ == '__main__':
     print(ele.ndof)
     ele.calc_D()
     print(ele.D)
-    ele.calc_B()
-    print(ele.B)
+    ele.calc_Ke()
+    print(ele.Ke)

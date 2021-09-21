@@ -1,24 +1,23 @@
 from element import *
+from intergration import *
 
 
 class Quadrangle(Element):
-    def __init__(self, nodes, E=1., nu=0.3):
+    def __init__(self, nodes, E=1., nu=0.3, t=1.):
         if len(nodes) != 4:
             raise AttributeError("A quadangle must include 4 nodes.")
         Element.__init__(self, nodes)
         self.E = E
         self.nu = nu
         self.ndof = 2
-        self.D = ti.field(ti.f32, shape=(3, 3))
-        self.B = ti.field(ti.f32, shape=(3, len(nodes) * self.ndof))
-        self.J = ti.field(ti.f32, shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
+        self.t = t
+        self.Ke = np.zeros(shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
 
     def calc_D(self):
         a = self.E / (1 - self.nu ** 2)
-        D = a * np.array([[1., self.nu, 0.],
+        self.D = a * np.array([[1., self.nu, 0.],
                           [self.nu, 1., 0.],
                           [0., 0., (1 - self.nu) / 2.]])
-        self.D.from_numpy(D)
 
     def calc_B(self, *intv_pts):
         s = intv_pts[0] * 1.0
@@ -53,7 +52,7 @@ class Quadrangle(Element):
         B420 = B411
         B421 = B400
 
-        self._B = np.array([[B100, 0, B200, 0, B300, 0, B400, 0],
+        self.B = np.array([[B100, 0, B200, 0, B300, 0, B400, 0],
                       [0, B111, 0, B211, 0, B311, 0, B411],
                       [B120, B121, B220, B221, B320, B321, B420, B421]])
 
@@ -65,3 +64,24 @@ class Quadrangle(Element):
                        [1 - s, s + t, -t - 1, 0]])
         self.J = np.dot(np.dot(X, J), Y) / 8.
 
+    def calc_Ke(self):
+        self.calc_D()
+        glq = Intergration(3) # 2 sample points
+        for i in range(len(glq.Xi)):
+            for j in range(len(glq.Xi)):
+                self.calc_B(glq.Xi[i], glq.Xi[j])
+                self.Ke += glq.w[i] * glq.w[j] * self.t * np.dot(np.dot(self.B.T, self.D), self.B) * self.J
+
+
+if __name__ == '__main__':
+    a = Node(0,0,0)
+    b = Node(1,0,0)
+    c = Node(1,1,0)
+    d = Node(1,2,0)
+    ele = Quadrangle([a,b,c,d])
+    print(ele.nodes)
+    print(ele.ndof)
+    ele.calc_D()
+    print(ele.D)
+    ele.calc_Ke()
+    print(ele.Ke)

@@ -1,4 +1,4 @@
-class GLQuadrature:
+class Intergration:
     # GaussLegendreQuadrature
     def __init__(self, num):
         self.num = 3  # number of sample points (0-4)

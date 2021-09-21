@@ -8,13 +8,13 @@ class Triangle(Element):
         Element.__init__(self, nodes)
         self.E = E
         self.nu = nu
-
         self.ndof = 2
         self.D = []
         self.B = []
         self.Ke = []
+        self.calc_volume()
 
-        # calc volume
+    def calc_volume(self):
         v1 = np.array([self.nodes[0].x, self.nodes[0].y])-np.array([self.nodes[1].x, self.nodes[1].y])
         v2 = np.array([self.nodes[0].x, self.nodes[0].y])-np.array([self.nodes[2].x, self.nodes[2].y])
         area = np.cross(v1, v2)/2.
