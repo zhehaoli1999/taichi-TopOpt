@@ -6,29 +6,29 @@ class Element(object):
         for nd in nodes:
             assert issubclass(type(nd), Node), "Must be Node type"
 
-        self._nodes = nodes # elemental nodes
-        self._dim = 0 # dimension
-        self._type = self.__class__.__name__ # elemental type
-        self._ID = None # index
+        self._nodes = nodes  # elemental nodes
+        self._dim = 0  # dimension
+        self._type = self.__class__.__name__  # elemental type
+        self._ID = None  # index
         self._eIk = None
         self._ndof = None  # nodal degree-of-freedom
-        self._volume = None # elemental volume
+        self._volume = None  # elemental volume
         self.init_keys()
 
-        self._E = None # Young's modulus
-        self._nu = None # Possion's ratio
-        self._t = 1. # thickness
+        self._E = None  # Young's modulus
+        self._nu = None  # Possion's ratio
+        self._t = 1.  # thickness
         self._D = None
         self._B = None
         self._J = None
-        self._Ke = None # elemental stiffness matrix
-        self._Me = None # elemental mass matrix
-        self.Xe = 1. # design variable
+        self._Ke = None  # elemental stiffness matrix
+        self._Me = None  # elemental mass matrix
+        self.Xe = 1.  # design variable
 
         self._stress = dict.fromkeys(self.eIk, 0.)
-        self.init_nodes(nodes) # initialize nodes
+        self.init_nodes(nodes)  # initialize nodes
         self.dens = 2
-        self.t = 1 # thickness
+        self.t = 1  # thickness
 
     def __repr__(self):
         return "%s Element: %r" % (self.elem_type, self.nodes,)
