@@ -5,17 +5,14 @@ import math
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
 
-import time
-
-# ti.init(ti.cpu, kernel_profiler=True)
 ti.init(ti.cpu)
 
 gui_y = 500
-gui_x = 2 * gui_y
+gui_x = 800
 display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 
-nely = 40
-nelx = 2 * nely
+nely = 50
+nelx = 80
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
 
@@ -40,17 +37,12 @@ all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
 free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)))
 n_free_dof = len(free_dofs)
 
-free_dofs_vec = ti.field(ti.int32, shape=n_free_dof)
+free_dofs_vec = ti.field(ti.i32, shape=n_free_dof)
 K_freedof = ti.field(ti.f64, shape=(n_free_dof, n_free_dof))
 F_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 U_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
 dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
-
-# for cg
-r = ti.field(dtype=ti.f64, shape=(n_free_dof))
-p = ti.field(dtype=ti.f64, shape=(n_free_dof))
-Ap = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
 @ti.kernel
 def display_sampling():
@@ -82,7 +74,6 @@ def BESO(crtvol):
 @ti.func
 def clamp(x: ti.template(), ely, elx):
     return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
-
 
 def filt(x, dc):
     nely, nelx = x.shape
@@ -131,58 +122,6 @@ def backward_map_U():
         idx = free_dofs_vec[i]
         U[idx] = U_freedof[i]
 
-@ti.func
-def cg_compute_Ap(A: ti.template(), p:ti.template()):
-    for I in range(n_free_dof):
-        Ap[I] = 0.
-
-    for i in range(n_free_dof):
-        for j in range(n_free_dof):
-            Ap[i] += A[i, j] * p[j]
-    # for i, j in ti.ndrange((n_free_dof, n_free_dof)): # error
-
-@ti.func
-def reduce(r: ti.template()):
-    result = 0.
-    for I in range(r.shape[0]):
-        result += r[I] * r[I]  # rsnew = r' * r
-    return result
-
-@ti.kernel
-def conjungate_gradient():
-    A, x, b = ti.static(K_freedof, U_freedof, F_freedof) # variable alias
-
-    # init
-    for I in ti.grouped(b):
-        x[I] = 0.
-        r[I] = b[I]  # r = b - A * x = b
-        p[I] = r[I]
-
-    rsold = reduce(r)
-
-    # cg iteration
-    for iter in range(n_free_dof + 50):
-        cg_compute_Ap(A, p)
-
-        beta = 0.
-        for I in range(n_free_dof):
-            beta += p[I] * Ap[I] # p' * Ap
-        alpha = rsold / beta
-
-        for I in range(n_free_dof):
-            x[I] += alpha * p[I]  # x = x + alpha * Ap
-            r[I] -= alpha * Ap[I] # r = r - alpha * Ap
-
-        rsnew = reduce(r)
-
-        if ti.sqrt(rsnew) < 1e-10:
-            break
-
-        for I in range(n_free_dof):
-            p[I] = r[I] + (rsnew / rsold) * p[I] # p = r + (rsnew / rsold) * p
-
-        rsold = rsnew
-
 def get_Ke():
     k = np.array(
         [1 / 2 - nu / 6, 1 / 8 + nu / 8, -1 / 4 - nu / 12, -1 / 8 + 3 * nu / 8, -1 / 4 + nu / 12, -1 / 8 - nu / 8,
@@ -222,7 +161,6 @@ def get_dc()-> ti.f64:
 
 def Solver():
     KG = csr_matrix(K_freedof.to_numpy())
-
     Fv = F_freedof.to_numpy()
     return spsolve(KG, Fv)
 
@@ -233,9 +171,10 @@ def initialize():
         xe[I] = 1
 
     # 2. set boundary condition
-    F[2 * nelx * (nely + 1) - 1] = -1.
+    F[2*(nelx+1)*(nely+1)-nely+1] = -1.
     for i in range(n_free_dof):
         F_freedof[i] = F[free_dofs_vec[i]]
+
 
 if __name__ == '__main__':
     gui = ti.GUI('Taichi TopoOpt', res=(gui_x, gui_y))
@@ -243,20 +182,14 @@ if __name__ == '__main__':
     initialize()
     get_Ke()
 
-    # print(K_freedof)
-    # print(U)
-    # print(display)
-    # print(dc)
-
     change = 1.
     volume = 1.
     dc_old = []
     history_C = []
-    print(f"total dof = {ndof}")
     while gui.running:
         x_old = xe.to_numpy()
         iter = 0
-        while change > 1e-2:
+        while change > 1e-3:
             iter += 1
 
             assemble_K()
@@ -265,15 +198,13 @@ if __name__ == '__main__':
             compliance = get_dc()
             dc.from_numpy(filt(x_old, dc.to_numpy()))
             dc_old = averaging_dc(dc_old)
-
             history_C.append(compliance)
-
             volume = max(volfrac, volume * (1-ert))
             x = BESO(volume)
 
             # check convergence
             if iter > 10:
-                change = abs((sum(history_C[iter - 4:iter + 1]) - sum(history_C[iter - 9:iter - 4])) / sum(history_C[iter - 9:iter - 4]))
+                change = abs((sum(history_C[iter - 5:iter]) - sum(history_C[iter - 10:iter - 5])) / sum(history_C[iter - 5:iter]))
 
             print(f"iter: {iter}, volume = {volume}, compliance = {compliance}, change = {change}")
 
@@ -283,10 +214,6 @@ if __name__ == '__main__':
 
             gui.set_image(display)
             gui.show()
-
-            # ti.print_kernel_profile_info()
-
-
 
 
 
