@@ -162,6 +162,7 @@ def get_dc()-> ti.f64:
 def Solver():
     KG = csr_matrix(K_freedof.to_numpy())
     Fv = F_freedof.to_numpy()
+    np.linalg.solve(KG,Fv)
     return spsolve(KG, Fv)
 
 @ti.kernel
