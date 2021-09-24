@@ -1,35 +1,23 @@
 import taichi as ti
 import numpy as np
 import math
-
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
 
-import time
-
-# ti.init(ti.cpu, kernel_profiler=True)
 ti.init(ti.cpu)
 
+# Display
 gui_y = 500
-gui_x = 2 * gui_y
+gui_x = 800
 display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 
-nely = 40
-nelx = 2 * nely
+# Model parameters
+nely = 50
+nelx = 80
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
 
-E = 1.
-nu = 0.3
-volfrac = 0.5 # volume limit
-penalty = 3
-rmin = 3
-
-# BESO parameter
-xmin = 1e-3
-ert = 0.02
-
-xe = ti.field(ti.f64, shape=(nely, nelx))
+# FEM variables
 K = ti.field(ti.f64, shape=(ndof, ndof))
 F = ti.field(ti.f64, shape=(ndof))
 U = ti.field(ti.f64, shape=(ndof))
@@ -40,17 +28,26 @@ all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
 free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)))
 n_free_dof = len(free_dofs)
 
-free_dofs_vec = ti.field(ti.int32, shape=n_free_dof)
+free_dofs_vec = ti.field(ti.i32, shape=n_free_dof)
 K_freedof = ti.field(ti.f64, shape=(n_free_dof, n_free_dof))
 F_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 U_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
-dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
+# BESO parameters
+E = 1.
+nu = 0.3
+volfrac = 0.5 # volume limit
+penalty = 3
+rmin = 4
+xmin = 1e-3
+ert = 0.02
 
-# for cg
-r = ti.field(dtype=ti.f64, shape=(n_free_dof))
-p = ti.field(dtype=ti.f64, shape=(n_free_dof))
-Ap = ti.field(dtype=ti.f64, shape=(n_free_dof))
+# BESO variables
+xe = ti.field(ti.f64, shape=(nely, nelx))
+dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
+compliance = ti.field(ti.f64, shape=()) # compliance
+dc_old = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
+
 
 @ti.kernel
 def display_sampling():
@@ -61,23 +58,6 @@ def display_sampling():
         ely = j // s_y
         display[i, gui_y - j] = 1. - xe[ely, elx] # Note:  transpose rho here
 
-def BESO(crtvol):
-    dc_np = dc.to_numpy()
-    l1 = dc_np.min()
-    l2 = dc_np.max()
-    tarvol = crtvol * nely * nelx
-    x = xe.to_numpy()
-    while l2 - l1 > 1e-5:
-        lmid = (l2 + l1) / 2.
-        for ely in range(0, nely):
-            for elx in range(0,nelx):
-                x[ely, elx] = 1 if dc_np[ely, elx] > lmid else xmin
-
-        if (sum(sum(x)) - tarvol) > 0:
-            l1 = lmid
-        else:
-            l2 = lmid
-    return x
 
 @ti.func
 def clamp(x: ti.template(), ely, elx):
@@ -91,23 +71,24 @@ def filt(x, dc):
 
     for i in range(nelx):
         for j in range(nely):
-            sum_ = 0
+            sum_ = 0.
             for k in range(max(i - rminf, 0), min(i + rminf + 1, nelx)):
                 for l in range(max(j - rminf, 0), min(j + rminf + 1, nely)):
-                    fac = rmin - math.sqrt((i - k) ** 2 + (j - l) ** 2)
-                    sum_ += + max(0, fac)
-                    dcf[j, i] = dcf[j, i] + max(0, fac) * dc[l, k]
+                    fac = rmin - math.sqrt((i - k) ** 2. + (j - l) ** 2.)
+                    sum_ += max(0., fac)
+                    dcf[j, i] = dcf[j, i] + max(0., fac) * dc[l, k]
             dcf[j, i] = dcf[j, i] / sum_
     return dcf
 
-def averaging_dc(dc_old):
-    if iter > 1:
-        for ely, elx in ti.ndrange(nely, nelx):
-            dc[ely, elx] = (dc[ely, elx] + dc_old[ely, elx]) * 0.5
-    return dc.to_numpy().copy()
 
 @ti.kernel
-def assemble_K():
+def averaging_dc():
+        for ely, elx in ti.ndrange(nely, nelx):
+            dc[ely, elx] = (dc[ely, elx] + dc_old[ely, elx]) * 0.5
+
+
+@ti.kernel
+def assemble_k():
     for I in ti.grouped(K):
         K[I] = 0.
 
@@ -124,66 +105,16 @@ def assemble_K():
     for i, j in ti.ndrange(n_free_dof,n_free_dof):
         K_freedof[i, j] = K[free_dofs_vec[i], free_dofs_vec[j]]
 
+
 @ti.kernel
-def backward_map_U():
+def backward_map_u():
     # mapping U_freedof backward to U
     for i in range(n_free_dof):
         idx = free_dofs_vec[i]
         U[idx] = U_freedof[i]
 
-@ti.func
-def cg_compute_Ap(A: ti.template(), p:ti.template()):
-    for I in range(n_free_dof):
-        Ap[I] = 0.
 
-    for i in range(n_free_dof):
-        for j in range(n_free_dof):
-            Ap[i] += A[i, j] * p[j]
-    # for i, j in ti.ndrange((n_free_dof, n_free_dof)): # error
-
-@ti.func
-def reduce(r: ti.template()):
-    result = 0.
-    for I in range(r.shape[0]):
-        result += r[I] * r[I]  # rsnew = r' * r
-    return result
-
-@ti.kernel
-def conjungate_gradient():
-    A, x, b = ti.static(K_freedof, U_freedof, F_freedof) # variable alias
-
-    # init
-    for I in ti.grouped(b):
-        x[I] = 0.
-        r[I] = b[I]  # r = b - A * x = b
-        p[I] = r[I]
-
-    rsold = reduce(r)
-
-    # cg iteration
-    for iter in range(n_free_dof + 50):
-        cg_compute_Ap(A, p)
-
-        beta = 0.
-        for I in range(n_free_dof):
-            beta += p[I] * Ap[I] # p' * Ap
-        alpha = rsold / beta
-
-        for I in range(n_free_dof):
-            x[I] += alpha * p[I]  # x = x + alpha * Ap
-            r[I] -= alpha * Ap[I] # r = r - alpha * Ap
-
-        rsnew = reduce(r)
-
-        if ti.sqrt(rsnew) < 1e-10:
-            break
-
-        for I in range(n_free_dof):
-            p[I] = r[I] + (rsnew / rsold) * p[I] # p = r + (rsnew / rsold) * p
-
-        rsold = rsnew
-
-def get_Ke():
+def get_ke():
     k = np.array(
         [1 / 2 - nu / 6, 1 / 8 + nu / 8, -1 / 4 - nu / 12, -1 / 8 + 3 * nu / 8, -1 / 4 + nu / 12, -1 / 8 - nu / 8,
          nu / 6, 1 / 8 - 3 * nu / 8])
@@ -199,9 +130,9 @@ def get_Ke():
 
     Ke.from_numpy(Ke_)
 
+
 @ti.kernel
-def get_dc()-> ti.f64:
-    compliance = 0.
+def get_dc():
     for ely, elx in ti.ndrange(nely, nelx):
         n1 = (nely + 1) * elx + ely + 1
         n2 = (nely + 1) * (elx + 1) + ely + 1
@@ -215,16 +146,34 @@ def get_dc()-> ti.f64:
         for i in ti.static(range(8)):
             d += 0.5 * Ue[i] * t[i] # d = Ue' * Ke * Ue
 
-        compliance += xe[ely, elx] ** penalty * d
+        compliance[None] += xe[ely, elx] ** penalty * d
 
         dc[ely, elx] = xe[ely, elx] ** (penalty - 1) * d
-    return compliance
 
-def Solver():
-    KG = csr_matrix(K_freedof.to_numpy())
 
+def solver():
+    KG = K_freedof.to_numpy()
     Fv = F_freedof.to_numpy()
-    return spsolve(KG, Fv)
+    U_freedof.from_numpy(spsolve(csr_matrix(KG),Fv)) # scipy solver, will be replaced
+
+
+def beso(crtvol):
+    dc_np = dc.to_numpy()
+    l1 = 0 # dc_np.min()
+    l2 = 1e5 # dc_np.max()
+    tarvol = crtvol * nely * nelx
+    x = xe.to_numpy()
+    while l2 - l1 > 1e-5:
+        lmid = (l2 + l1) / 2.
+        for ely in range(0, nely):
+            for elx in range(0,nelx):
+                x[ely, elx] = 1 if dc_np[ely, elx] > lmid else xmin
+        if (sum(sum(x)) - tarvol) > 0:
+            l1 = lmid
+        else:
+            l2 = lmid
+    return x
+
 
 @ti.kernel
 def initialize():
@@ -233,49 +182,43 @@ def initialize():
         xe[I] = 1
 
     # 2. set boundary condition
-    F[2 * nelx * (nely + 1) - 1] = -1.
+    F[2*(nelx+1)*(nely+1)-nely-1] = -1.
     for i in range(n_free_dof):
         F_freedof[i] = F[free_dofs_vec[i]]
+
 
 if __name__ == '__main__':
     gui = ti.GUI('Taichi TopoOpt', res=(gui_x, gui_y))
     free_dofs_vec.from_numpy(free_dofs)
     initialize()
-    get_Ke()
-
-    # print(K_freedof)
-    # print(U)
-    # print(display)
-    # print(dc)
+    get_ke()
 
     change = 1.
     volume = 1.
-    dc_old = []
     history_C = []
-    print(f"total dof = {ndof}")
     while gui.running:
         x_old = xe.to_numpy()
         iter = 0
-        while change > 1e-2:
+        while change > 1e-3:
             iter += 1
-
-            assemble_K()
-            U_freedof.from_numpy(Solver())
-            backward_map_U()
-            compliance = get_dc()
-            dc.from_numpy(filt(x_old, dc.to_numpy()))
-            dc_old = averaging_dc(dc_old)
-
-            history_C.append(compliance)
-
+            compliance[None] = 0.
+            dc_old = dc
             volume = max(volfrac, volume * (1-ert))
-            x = BESO(volume)
+            if iter > 1: dc_old = dc
+            assemble_k()
+            solver()
+            backward_map_u()
+            get_dc()
+            dc.from_numpy(filt(x_old, dc.to_numpy()))
+            if iter > 1: averaging_dc()
+            history_C.append(compliance[None])
+            x = beso(volume)
 
             # check convergence
             if iter > 10:
-                change = abs((sum(history_C[iter - 4:iter + 1]) - sum(history_C[iter - 9:iter - 4])) / sum(history_C[iter - 9:iter - 4]))
+                change = abs((sum(history_C[iter - 5:iter]) - sum(history_C[iter - 10:iter - 5])) / sum(history_C[iter - 5:iter]))
 
-            print(f"iter: {iter}, volume = {volume}, compliance = {compliance}, change = {change}")
+            print(f"iter: {iter}, volume = {volume}, compliance = {compliance[None]}, change = {change}")
 
             x_old = x
             xe.from_numpy(x)
@@ -283,10 +226,6 @@ if __name__ == '__main__':
 
             gui.set_image(display)
             gui.show()
-
-            # ti.print_kernel_profile_info()
-
-
 
 
 

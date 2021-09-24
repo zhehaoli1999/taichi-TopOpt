@@ -27,32 +27,32 @@ class Quadrangle(Element):
         x3, y3 = self.nodes[2].x, self.nodes[2].y
         x4, y4 = self.nodes[3].x, self.nodes[3].y
 
-        a = 1 / 4 * (y1 * (s - 1) + y2 * (-1 - s) + y3 * (1 + s) + y4 * (1 - s))
-        b = 1 / 4 * (y1 * (t - 1) + y2 * (1 - t) + y3 * (1 + t) + y4 * (-1 - t))
-        c = 1 / 4 * (x1 * (t - 1) + x2 * (1 - t) + x3 * (1 + t) + x4 * (-1 - t))
-        d = 1 / 4 * (x1 * (s - 1) + x2 * (-1 - s) + x3 * (1 + s) + x4 * (1 - s))
+        a = 0.25 * (y1 * (s - 1) + y2 * (-1 - s) + y3 * (1 + s) + y4 * (1 - s))
+        b = 0.25 * (y1 * (t - 1) + y2 * (1 - t) + y3 * (1 + t) + y4 * (-1 - t))
+        c = 0.25 * (x1 * (t - 1) + x2 * (1 - t) + x3 * (1 + t) + x4 * (-1 - t))
+        d = 0.25 * (x1 * (s - 1) + x2 * (-1 - s) + x3 * (1 + s) + x4 * (1 - s))
 
-        B100 = -1 / 4 * a * (1 - t) + 1 / 4 * b * (1 - s)
-        B111 = -1 / 4 * c * (1 - s) + 1 / 4 * d * (1 - t)
+        B100 = -0.25 * a * (1 - t) + 0.25 * b * (1 - s)
+        B111 = -0.25 * c * (1 - s) + 0.25 * d * (1 - t)
         B120 = B111
         B121 = B100
 
-        B200 = 1 / 4 * a * (1 - t) + 1 / 4 * b * (1 + s)
-        B211 = -1 / 4 * c * (1 + s) - 1 / 4 * d * (1 - t)
+        B200 = 0.25 * a * (1 - t) + 0.25 * b * (1 + s)
+        B211 = -0.25 * c * (1 + s) - 0.25 * d * (1 - t)
         B220 = B211
         B221 = B200
 
-        B300 = 1 / 4 * a * (1 + t) - 1 / 4 * b * (1 + s)
-        B311 = 1 / 4 * c * (1 + s) - 1 / 4 * d * (1 + t)
+        B300 = 0.25 * a * (1 + t) - 0.25 * b * (1 + s)
+        B311 = 0.25 * c * (1 + s) - 0.25 * d * (1 + t)
         B320 = B311
         B321 = B300
 
-        B400 = -1 / 4 * a * (1 + t) - 1 / 4 * b * (1 - s)
-        B411 = 1 / 4 * c * (1 - s) + 1 / 4 * d * (1 + t)
+        B400 = -0.25 * a * (1 + t) - 0.25 * b * (1 - s)
+        B411 = 0.25 * c * (1 - s) + 0.25 * d * (1 + t)
         B420 = B411
         B421 = B400
 
-        self.B = np.array([[B100, 0, B200, 0, B300, 0, B400, 0],
+        B = np.array([[B100, 0, B200, 0, B300, 0, B400, 0],
                       [0, B111, 0, B211, 0, B311, 0, B411],
                       [B120, B121, B220, B221, B320, B321, B420, B421]])
 
@@ -62,15 +62,18 @@ class Quadrangle(Element):
                        [t - 1, 0, s + 1, -s - t],
                        [s - t, -s - 1, 0, t + 1],
                        [1 - s, s + t, -t - 1, 0]])
-        self.J = np.dot(np.dot(X, J), Y) / 8.
+        J = np.dot(np.dot(X, J), Y) / 8.
+        return B,J
 
     def calc_Ke(self):
         self.calc_D()
-        glq = Intergration(3) # 2 sample points
+
+        glq = Intergration(2) # 2 sample points
         for i in range(len(glq.Xi)):
             for j in range(len(glq.Xi)):
-                self.calc_B(glq.Xi[i], glq.Xi[j])
-                self.Ke += glq.w[i] * glq.w[j] * self.t * np.dot(np.dot(self.B.T, self.D), self.B) * self.J
+                B, J = self.calc_B(glq.Xi[i], glq.Xi[j])
+                B /= J
+                self.Ke += glq.w[i] * glq.w[j] * self.t * np.dot(np.dot(B.T, self.D), B) * J
 
 
 if __name__ == '__main__':
