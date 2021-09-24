@@ -1,7 +1,6 @@
 import taichi as ti
 import numpy as np
 import math
-
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
 import scipy.io as spi
@@ -21,7 +20,7 @@ E = 1.
 nu = 0.3
 volfrac = 0.5 # volume limit
 penalty = 3
-rmin = 5
+rmin = 4
 
 # BESO parameter
 xmin = 1e-3
@@ -44,6 +43,7 @@ F_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 U_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
 dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
+compliance = ti.field(ti.f64, shape=()) # compliance
 
 
 @ti.kernel
@@ -58,8 +58,8 @@ def display_sampling():
 
 def beso(crtvol):
     dc_np = dc.to_numpy()
-    l1 = dc_np.min()
-    l2 = dc_np.max()
+    l1 = 0 # dc_np.min()
+    l2 = 1e5 # dc_np.min()
     tarvol = crtvol * nely * nelx
     x = xe.to_numpy()
     while l2 - l1 > 1e-5:
@@ -73,6 +73,7 @@ def beso(crtvol):
         else:
             l2 = lmid
     return x
+
 
 @ti.func
 def clamp(x: ti.template(), ely, elx):
@@ -90,7 +91,7 @@ def filt(x, dc):
             for k in range(max(i - rminf, 0), min(i + rminf + 1, nelx)):
                 for l in range(max(j - rminf, 0), min(j + rminf + 1, nely)):
                     fac = rmin - math.sqrt((i - k) ** 2. + (j - l) ** 2.)
-                    sum_ += + max(0., fac)
+                    sum_ += max(0., fac)
                     dcf[j, i] = dcf[j, i] + max(0., fac) * dc[l, k]
             dcf[j, i] = dcf[j, i] / sum_
     return dcf
@@ -148,8 +149,7 @@ def get_ke():
 
 
 @ti.kernel
-def get_dc()-> ti.f64:
-    compliance = 0.
+def get_dc():
     for ely, elx in ti.ndrange(nely, nelx):
         n1 = (nely + 1) * elx + ely + 1
         n2 = (nely + 1) * (elx + 1) + ely + 1
@@ -163,17 +163,16 @@ def get_dc()-> ti.f64:
         for i in ti.static(range(8)):
             d += 0.5 * Ue[i] * t[i] # d = Ue' * Ke * Ue
 
-        compliance += xe[ely, elx] ** penalty * d
+        compliance[None] += xe[ely, elx] ** penalty * d
 
         dc[ely, elx] = xe[ely, elx] ** (penalty - 1) * d
-    return compliance
 
 
 def solver():
-    KG = K_freedof.to_numpy(dtype=np.double)
-    Fv = F_freedof.to_numpy(dtype=np.double)
-    # return np.linalg.solve(KG, Fv) # numpy solver
-    return spsolve(csr_matrix(KG, dtype=np.double),Fv) # scipy solver
+    KG = K_freedof.to_numpy()
+    Fv = F_freedof.to_numpy()
+    U_freedof.from_numpy(spsolve(csr_matrix(KG),Fv)) # scipy solver
+    # U_freedof.from_numpy(np.linalg.solve(KG, Fv))  # numpy solver
 
 
 @ti.kernel
@@ -203,22 +202,24 @@ if __name__ == '__main__':
         iter = 0
         while change > 1e-3:
             iter += 1
-
-            assemble_k()
-            U_freedof.from_numpy(solver())
-            backward_map_u()
-            compliance = get_dc()
-            dc.from_numpy(filt(x_old, dc.to_numpy()))
-            dc_old = averaging_dc(dc_old)
-            history_C.append(compliance)
+            compliance[None] = 0.
             volume = max(volfrac, volume * (1-ert))
+            if iter > 1: dc_old = dc
+            assemble_k()
+            solver()
+            backward_map_u()
+            get_dc()
+            # spi.savemat("dc_beso.mat", {"dc": dc.to_numpy()})
+            dc.from_numpy(filt(x_old, dc.to_numpy()))
+            averaging_dc(dc_old)
+            history_C.append(compliance[None])
             x = beso(volume)
 
             # check convergence
             if iter > 10:
                 change = abs((sum(history_C[iter - 5:iter]) - sum(history_C[iter - 10:iter - 5])) / sum(history_C[iter - 5:iter]))
 
-            print(f"iter: {iter}, volume = {volume}, compliance = {compliance}, change = {change}")
+            print(f"iter: {iter}, volume = {volume}, compliance = {compliance[None]}, change = {change}")
 
             x_old = x
             xe.from_numpy(x)
