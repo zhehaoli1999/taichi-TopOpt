@@ -36,9 +36,9 @@ U_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 # BESO parameters
 E = 1.
 nu = 0.3
+rmin = 4
 volfrac = 0.5 # volume limit
 penalty = 3
-rmin = 4
 xmin = 1e-3
 ert = 0.02
 
@@ -47,6 +47,24 @@ xe = ti.field(ti.f64, shape=(nely, nelx))
 dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
 compliance = ti.field(ti.f64, shape=()) # compliance
 dc_old = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
+
+
+def examples(case=0):
+    if  case == 0:
+        F[2*(nelx+1)*(nely+1)-nely-1] = -1.
+    if case == 1:
+        F[2*nelx*(nely+1)-1] = -1.
+
+
+@ti.kernel
+def initialize():
+    # 1. initialize rho
+    for I in ti.grouped(xe):
+        xe[I] = 1
+
+    # 2. set boundary condition
+    for i in range(n_free_dof):
+        F_freedof[i] = F[free_dofs_vec[i]]
 
 
 @ti.kernel
@@ -175,24 +193,14 @@ def beso(crtvol):
     return x
 
 
-@ti.kernel
-def initialize():
-    # 1. initialize rho
-    for I in ti.grouped(xe):
-        xe[I] = 1
-
-    # 2. set boundary condition
-    F[2*(nelx+1)*(nely+1)-nely-1] = -1.
-    for i in range(n_free_dof):
-        F_freedof[i] = F[free_dofs_vec[i]]
-
-
 if __name__ == '__main__':
-    gui = ti.GUI('Taichi TopoOpt', res=(gui_x, gui_y))
+    gui = ti.GUI('Taichi TopOpt', res=(gui_x, gui_y))
+    video_manager = ti.VideoManager(output_dir='./img', framerate=2, automatic_build=False)
+
+    examples(0)
     free_dofs_vec.from_numpy(free_dofs)
     initialize()
     get_ke()
-
     change = 1.
     volume = 1.
     history_C = []
@@ -223,9 +231,9 @@ if __name__ == '__main__':
             x_old = x
             xe.from_numpy(x)
             display_sampling()
-
+            video_manager.write_frame(display)
+            print(f'\rFrame {iter} is recorded', end=''+'\n')
             gui.set_image(display)
             gui.show()
-
-
-
+        video_manager.make_video(gif=True)
+        gui.close()
