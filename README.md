@@ -2,7 +2,7 @@
 
 ### (Under Active Development)
 ![result2d](./img/result2d.png)
-![result2d](./img/beso.png)
+![beso_cantilever](./img/video.gif)
 ## Intro
 A topology optimization framework written in Taichi programming language, which is embedded in Python.
 ## Requirement 
