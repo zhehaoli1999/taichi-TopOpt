@@ -226,12 +226,11 @@ if __name__ == '__main__':
             if iter > 10:
                 change = abs((sum(history_C[iter - 5:iter]) - sum(history_C[iter - 10:iter - 5])) / sum(history_C[iter - 5:iter]))
 
-            print(f"iter: {iter}, volume = {volume}, compliance = {compliance[None]}, change = {change}")
-
             x_old = x
             xe.from_numpy(x)
             display_sampling()
             video_manager.write_frame(display)
+            print(f"iter: {iter}, volume = {volume}, compliance = {compliance[None]}, change = {change}")
             print(f'\rFrame {iter} is recorded', end=''+'\n')
             gui.set_image(display)
             gui.show()
