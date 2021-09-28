@@ -212,7 +212,6 @@ if __name__ == '__main__':
             compliance[None] = 0.
             dc_old = dc
             volume = max(volfrac, volume * (1-ert))
-            if iter > 1: dc_old = dc
             assemble_k()
             solver()
             backward_map_u()
