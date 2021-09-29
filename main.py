@@ -2,14 +2,14 @@ import taichi as ti
 import numpy as np
 from solver import fem_mgpcg
 
-ti.init(ti.cpu, kernel_profiler=True)
-# ti.init(ti.cpu)
+# ti.init(ti.cpu, kernel_profiler=True)
+ti.init(ti.cpu)
 
 gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 
-nely = 10
+nely = 20
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -75,8 +75,8 @@ def derivative_filter():
     rmin = 1.5
     rminf = ti.floor(rmin)
     for ely, elx in ti.ndrange(nely, nelx):
-        sum = rmin * dc[ely, elx]
-        dc[ely, elx] = sum * rho[ely, elx]
+        sum = rmin * rho[ely, elx]
+        dc[ely, elx] = sum * dc[ely, elx]
         # search neighbor
         for y in range(ely - rminf, ely+rminf+1):
             for x in range(elx - rminf, elx+rminf+1):
@@ -163,10 +163,9 @@ if __name__ == '__main__':
         while change > 0.01:
             iter += 1
 
-
             solver.solve(U, max_iters=ndof + 100, verbose=False)
             get_dc()
-            # derivative_filter()
+            derivative_filter()
             x = OC()
 
             volume = sum(sum(x)) / (nely * nelx)
@@ -185,7 +184,7 @@ if __name__ == '__main__':
             gui.set_image(display)
             gui.show()
 
-            ti.print_kernel_profile_info()
+            # ti.print_kernel_profile_info()
 
 
 

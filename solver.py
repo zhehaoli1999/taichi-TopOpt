@@ -18,6 +18,7 @@ class fem_mgpcg:
         self.r = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # residual vector
         self.z = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # M^-1 r
         self.Itp = [ti.field(dtype=ti.f32) for _ in range(self.n_mg_levels - 1)]  # Interpolation matrix I
+        self.Itp_mask = [ti.field(dtype=ti.i8) for _ in range(self.n_mg_levels - 1)]
         # self.R = [ti.field(dtype=ti.f32) for _ in range(self.n_mg_levels-1)] # R = I^T
 
         self.nelx = nelx
@@ -40,7 +41,7 @@ class fem_mgpcg:
             nelx_l = self.nelx // 2 ** l
             ndof_l = 2 * (nely_l + 1) * (nelx_l + 1)  # calculate num of freedom in each level
 
-            ti.root.dense(ti.ij, ndof_l).place(self.A[l])
+            ti.root.dense(ti.ij, ndof_l).place(self.A[l]) # TODO: Leverage sparcity
             ti.root.dense(ti.i, ndof_l).place(self.r[l], self.z[l])
 
             if l < n_mg_levels - 1:
@@ -49,8 +50,10 @@ class fem_mgpcg:
                 ndof_2l = 2 * (nely_2l + 1) * (nelx_2l + 1)
 
                 ti.root.dense(ti.ij, (ndof_l, ndof_2l)).place(self.Itp[l])  # shape of Itp[l] is (ndof_l x ndof_2l)
+                ti.root.dense(ti.ij, (ndof_l, ndof_2l)).place(self.Itp_mask[l])
+                self.Itp_mask[l].fill(0)
 
-        # initialize
+                # initialize
         print("mgpcg solver initializing...")
 
         for l in range(n_mg_levels - 1):
@@ -128,6 +131,7 @@ class fem_mgpcg:
                 # if dof_idx_h[t] in freedof_idx[l-1]: # check if node in level h is fixed
                 if self.check_is_free(l, node_x_h, node_y_h, t):
                     self.Itp[l][dof_idx_h[t], dof_idx_2h[t]] = 1.
+                    self.Itp_mask[l][dof_idx_h[t], dof_idx_2h[t]] = 1
 
             # situation of weight = 1 / 2.
             # for i in ti.Vector([-1, +1]):  #FIXME: a bug to report "TypeError: Can only iterate through Taichi fields/snodes (via template) or dense arrays (via any_arr)"
@@ -140,6 +144,7 @@ class fem_mgpcg:
                         # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
                         if self.check_is_free(l, x, y, t):
                             self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 2.
+                            self.Itp_mask[l][dof_h[t], dof_idx_2h[t]] = 1
 
             for jj in ti.static(range(2)):
                 j = v[jj]
@@ -150,6 +155,7 @@ class fem_mgpcg:
                         # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
                         if self.check_is_free(l, x, y, t):
                             self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 2.
+                            self.Itp_mask[l][dof_h[t], dof_idx_2h[t]] = 1
 
             # situation of weight = 1 / 4.
             for ii, jj in ti.static(ti.ndrange(2,2)):
@@ -163,6 +169,7 @@ class fem_mgpcg:
                             # if dof_h[t] in freedof_idx[l-1]:
                             if self.check_is_free(l, x, y, t):
                                 self.Itp[l][dof_h[t], dof_idx_2h[t]] = 1 / 4.
+                                self.Itp_mask[l][dof_h[t], dof_idx_2h[t]] = 1
 
     @ti.kernel
     def get_kl(self, l: ti.template()):
@@ -176,11 +183,13 @@ class fem_mgpcg:
         for i, j in ti.ndrange(n2, n2):
             self.A[l][i, j] = 0.
             for t in range(n1):
-                s = 0.
-                for m in range(n1):
-                    s += self.A[l - 1][t, m] * self.Itp[l - 1][m, j]
-                s = s * self.Itp[l - 1][t, i]
-                self.A[l][i, j] += s
+                if self.Itp_mask[l - 1][t, i] == 1:
+                    s = 0.
+                    for m in range(n1):
+                        if self.Itp_mask[l - 1][m, j] == 1:
+                            s += self.A[l - 1][t, m] * self.Itp[l - 1][m, j]
+                    s = s * self.Itp[l - 1][t, i]
+                    self.A[l][i, j] += s
 
     @ti.kernel
     def set_A0(self, K: ti.template()):
