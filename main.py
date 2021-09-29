@@ -2,12 +2,12 @@ import taichi as ti
 import numpy as np
 from solver import fem_mgpcg
 
-ti.init(ti.cpu)
+ti.init(ti.cpu, kernel_profiler=True)
 # ti.init(ti.cpu)
 
 gui_y = 500
 gui_x = 2 * gui_y
-display = ti.field(ti.f32, shape=(gui_x, gui_y)) # field for display
+display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 
 nely = 10
 nelx = 2 * nely
@@ -19,18 +19,18 @@ nu = 0.3
 volfrac = 0.5 # volume limit
 simp_penal = 3
 
-rho = ti.field(ti.f32, shape=(nely, nelx))
-K = ti.field(ti.f32, shape=(ndof, ndof))
-F = ti.field(ti.f32, shape=(ndof))
-U = ti.field(ti.f32, shape=(ndof))
-Ke = ti.field(ti.f32, shape=(8,8))
+rho = ti.field(ti.f64, shape=(nely, nelx))
+K = ti.field(ti.f64, shape=(ndof, ndof))
+F = ti.field(ti.f64, shape=(ndof))
+U = ti.field(ti.f64, shape=(ndof))
+Ke = ti.field(ti.f64, shape=(8,8))
 
-dc = ti.field(ti.f32, shape=(nely, nelx))  # derivative of compliance
+dc = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
 
 # set fixed dof
 fixed_dofs = list(range(0, 2 * (nely + 1), 2))
 fixed_dofs.append(2 * (nelx + 1) * (nely + 1) - 1)
-fixed_dofs_vec = ti.field(ti.f32, shape=(len(fixed_dofs)))
+fixed_dofs_vec = ti.field(ti.f64, shape=(len(fixed_dofs)))
 fixed_dofs_vec.from_numpy(np.array(fixed_dofs))
 
 # set force
@@ -70,25 +70,22 @@ def OC():
 
     return xnew
 
-@ti.func
-def clamp(x: ti.template(), ely, elx):
-    return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
-
 @ti.kernel
 def derivative_filter():
-    rmin = 1.2
+    rmin = 1.5
+    rminf = ti.floor(rmin)
     for ely, elx in ti.ndrange(nely, nelx):
-        dc[ely, elx] = rmin * clamp(rho, ely, elx) * dc[ely, elx] +  \
-                       (rmin - 1) * (clamp(rho, ely-1, elx) * clamp(dc, ely-1, elx) + \
-                                    clamp(rho, ely+1, elx) * clamp(dc, ely+1, elx) + \
-                                    clamp(rho, ely, elx-1) * clamp(dc, ely, elx-1) + \
-                                    clamp(rho, ely, elx+1) * clamp(dc, ely, elx+1))
+        sum = rmin * dc[ely, elx]
+        dc[ely, elx] = sum * rho[ely, elx]
+        # search neighbor
+        for y in range(ely - rminf, ely+rminf+1):
+            for x in range(elx - rminf, elx+rminf+1):
+                if 0<= y < nely and 0 <= x < nelx:
+                    weight = ti.max(0., rmin - ti.sqrt((y - ely) ** 2 + (x - elx) ** 2)) * rho[y, x]
+                    sum += weight
+                    dc[ely, elx] += weight * dc[y, x]
 
-        weight = rmin * clamp(rho, ely, elx)  + \
-                (rmin - 1) * (clamp(rho, ely-1, elx) + clamp(rho, ely+1, elx) + \
-                                clamp(rho, ely, elx-1) + clamp(rho, ely, elx+1))
-
-        dc[ely, elx] = dc[ely, elx] / weight
+        dc[ely, elx] = dc[ely, elx] / sum
 
 @ti.kernel
 def assemble_K():
@@ -149,24 +146,29 @@ if __name__ == '__main__':
     init_rho()
     get_Ke()
     assemble_K()
-
-    solver = fem_mgpcg(nelx=nelx, nely=nely, fixed_dofs=fixed_dofs_vec, K=K, F=F)
+    solver = fem_mgpcg(nelx=nelx, nely=nely, fixed_dofs=fixed_dofs_vec,
+                       K=K, F=F, use_multigrid=True, dtype=ti.f64)
 
     change = 1.
-
-    print(f"total dof = {ndof}")
+    # solver.solve(U, verbose=False)
+    # print(U)
+    # get_dc()
+    # print(dc)
+    #
+    # print(f"total dof = {ndof}")
     while gui.running:
         x_old = rho.to_numpy()
         iter = 0
+
         while change > 0.01:
             iter += 1
 
-            solver.solve(U, verbose=False)
 
+            solver.solve(U, max_iters=ndof + 100, verbose=False)
             get_dc()
-            derivative_filter()
-
+            # derivative_filter()
             x = OC()
+
             volume = sum(sum(x)) / (nely * nelx)
             change = np.max(np.abs(x - x_old))
 
@@ -175,12 +177,15 @@ if __name__ == '__main__':
             x_old = x
 
             rho.from_numpy(x)
+            assemble_K()
+            solver.re_init(K)
+
             display_sampling()
 
             gui.set_image(display)
             gui.show()
 
-            # ti.print_kernel_profile_info()
+            ti.print_kernel_profile_info()
 
 
 

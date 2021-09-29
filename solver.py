@@ -3,8 +3,8 @@ from utils import *
 
 @ti.data_oriented
 class fem_mgpcg:
-    def __init__(self, nelx, nely, fixed_dofs, K, F, dim=2, n_mg_levels=4, dtype=ti.f32):
-        self.use_multigrid = True
+    def __init__(self, nelx, nely, fixed_dofs, K, F, dim=2, n_mg_levels=4, dtype=ti.f32, use_multigrid=True):
+        self.use_multigrid = use_multigrid
 
         self.n_mg_levels = n_mg_levels
         self.pre_and_post_smoothing = 4
@@ -17,7 +17,8 @@ class fem_mgpcg:
         self.A = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # stiffness matrix, A[0] = K
         self.r = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # residual vector
         self.z = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # M^-1 r
-        self.Itp = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels - 1)]  # Interpolation matrix I
+        self.Itp = [ti.field(dtype=ti.f32) for _ in range(self.n_mg_levels - 1)]  # Interpolation matrix I
+        # self.R = [ti.field(dtype=ti.f32) for _ in range(self.n_mg_levels-1)] # R = I^T
 
         self.nelx = nelx
         self.nely = nely
@@ -62,6 +63,11 @@ class fem_mgpcg:
             self.get_kl(l)
 
         print("mgpcg solver initialized")
+
+    def re_init(self, K):
+        self.set_A0(K)
+        for l in range(1, self.n_mg_levels):
+            self.get_kl(l)
 
     @ti.func
     def is_in(self, num, array):
@@ -167,15 +173,14 @@ class fem_mgpcg:
         n1 = self.A[l - 1].shape[0]
         n2 = self.A[l].shape[0]
         # Use Garlekin coarsening: K[l+1] = R[l] @ K[l] @ I[l], where R = transpose(I)
-        for i in range(n2):
-            for j in range(n2):
-                self.A[l][i, j] = 0.
-                for t in range(n1):
-                    s = 0.
-                    for m in range(n1):
-                        s += self.A[l - 1][t, m] * self.Itp[l - 1][m, j]
-                    s = s * self.Itp[l - 1][t, i]
-                    self.A[l][i, j] += s
+        for i, j in ti.ndrange(n2, n2):
+            self.A[l][i, j] = 0.
+            for t in range(n1):
+                s = 0.
+                for m in range(n1):
+                    s += self.A[l - 1][t, m] * self.Itp[l - 1][m, j]
+                s = s * self.Itp[l - 1][t, i]
+                self.A[l][i, j] += s
 
     @ti.kernel
     def set_A0(self, K: ti.template()):
