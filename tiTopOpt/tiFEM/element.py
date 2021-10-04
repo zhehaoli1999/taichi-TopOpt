@@ -10,7 +10,7 @@ class Element:
 
         self.nodes = nodes # the nodes in this element
         self.dim = nodes[0].dim
-        self.nodeID = [] # the index of each node
+        self.cont_nds = [] # the indices of the connected nodes
         self.adj_elems = [] # the adjacent elements
         self.ID = None  # index
         self.E = E  # Young's modulus

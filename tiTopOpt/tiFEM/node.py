@@ -8,7 +8,7 @@ class Node(object):
         self.set_dof()  # set dofs
         self.force = []  # force vector
         self.disp = []  # displacement vector
-        self.adj_elems = [] # adjacent elements
+        self.cont_elems = [] # connected elements
         self.adj_nds = [] # adjacent nodes
 
     def __repr__(self):
