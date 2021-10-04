@@ -139,7 +139,7 @@ class Quadrangle(Element):
     def calc_Ke(self):
         self.calc_D()
 
-        glq = Intergration(2) # 2 sample points
+        glq = integration(2) # 2 sample points
         for i in range(len(glq.Xi)):
             for j in range(len(glq.Xi)):
                 B, J = self.calc_B(glq.Xi[i], glq.Xi[j])
@@ -283,7 +283,7 @@ class Hexahedron(Element):
     def calc_Ke(self):
         self.calc_D()
 
-        glq = Intergration(2) # 2 sample points
+        glq = integration(2) # 2 sample points
         for i in range(len(glq.Xi)):
             for j in range(len(glq.Xi)):
                 for k in range(len(glq.Xi)):
