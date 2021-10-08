@@ -17,7 +17,7 @@ class fem_mgpcg:
         self.A = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # stiffness matrix, A[0] = K
         self.r = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # residual vector
         self.z = [ti.field(dtype=self.real) for _ in range(self.n_mg_levels)]  # M^-1 r
-        self.Itp = [ti.field(dtype=ti.f32) for _ in range(self.n_mg_levels - 1)]  # Interpolation matrix I
+        self.Itp = [ti.field(dtype=ti.f64) for _ in range(self.n_mg_levels - 1)]  # Interpolation matrix I
         self.Itp_mask = [ti.field(dtype=ti.i8) for _ in range(self.n_mg_levels - 1)]
         # self.R = [ti.field(dtype=ti.f32) for _ in range(self.n_mg_levels-1)] # R = I^T
 
@@ -42,6 +42,7 @@ class fem_mgpcg:
             ndof_l = 2 * (nely_l + 1) * (nelx_l + 1)  # calculate num of freedom in each level
 
             ti.root.dense(ti.ij, ndof_l).place(self.A[l]) # TODO: Leverage sparcity
+            self.A[l].fill(0.)
             ti.root.dense(ti.i, ndof_l).place(self.r[l], self.z[l])
 
             if l < n_mg_levels - 1:
@@ -50,20 +51,22 @@ class fem_mgpcg:
                 ndof_2l = 2 * (nely_2l + 1) * (nelx_2l + 1)
 
                 ti.root.dense(ti.ij, (ndof_l, ndof_2l)).place(self.Itp[l])  # shape of Itp[l] is (ndof_l x ndof_2l)
+                self.Itp[l].fill(0.)
                 ti.root.dense(ti.ij, (ndof_l, ndof_2l)).place(self.Itp_mask[l])
                 self.Itp_mask[l].fill(0)
 
                 # initialize
         print("mgpcg solver initializing...")
 
-        for l in range(n_mg_levels - 1):
-            self.init_Itp(l)
-
         self.set_b(F)
         self.set_A0(K)
 
-        for l in range(1, n_mg_levels):
-            self.get_kl(l)
+        if self.use_multigrid:
+            for l in range(n_mg_levels - 1):
+                self.init_Itp(l)
+
+            for l in range(1, n_mg_levels):
+                self.get_kl(l)
 
         print("mgpcg solver initialized")
 
@@ -114,16 +117,16 @@ class fem_mgpcg:
         nelx_h = self.nelx // 2 ** l
 
         dim = 2
-        v = ti.Vector([-1, +1])
+        v = ti.Vector([-1, +1], dt=ti.i32)
         for node_y_2h, node_x_2h  in ti.ndrange(nely_2h + 1, nelx_2h + 1):
             node_y_h = node_y_2h * 2  # Get node coordinate in level h
             node_x_h = node_x_2h * 2
 
             # get indices of dof
             dof_idx_2h = ti.Vector([dim * (node_x_2h * (nely_2h + 1) + node_y_2h), \
-                                    dim * (node_x_2h * (nely_2h + 1) + node_y_2h) + 1])
+                                    dim * (node_x_2h * (nely_2h + 1) + node_y_2h) + 1], dt=ti.i32)
             dof_idx_h = ti.Vector([dim * (node_x_h * (nely_h + 1) + node_y_h), \
-                                   dim * (node_x_h * (nely_h + 1) + node_y_h) + 1])
+                                   dim * (node_x_h * (nely_h + 1) + node_y_h) + 1], dt=ti.i32)
 
             # bilinear interpolation
             # situation of weight = 1
@@ -139,7 +142,7 @@ class fem_mgpcg:
                 i = v[ii]
                 x, y = node_x_h + i, node_y_h
                 if 0 <= x < nelx_h:
-                    dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
+                    dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1], dt=ti.i32)
                     for t in ti.static(range(2)):
                         # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
                         if self.check_is_free(l, x, y, t):
@@ -150,7 +153,7 @@ class fem_mgpcg:
                 j = v[jj]
                 x, y = node_x_h, node_y_h + j
                 if 0 <= y < nely_h:
-                    dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
+                    dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1], dt=ti.i32)
                     for t in ti.static(range(2)):
                         # if dof_h[t] in freedof_idx[l - 1]: # check if fixed
                         if self.check_is_free(l, x, y, t):
@@ -164,7 +167,7 @@ class fem_mgpcg:
                     x = node_x_h + i
                     y = node_y_h + j
                     if 0 <= x < nelx_h and 0 <= y < nely_h:
-                        dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1])
+                        dof_h = ti.Vector([dim * (x * (nely_h + 1) + y), dim * (x * (nely_h + 1) + y) + 1], dt=ti.i32)
                         for t in ti.static(range(2)):
                             # if dof_h[t] in freedof_idx[l-1]:
                             if self.check_is_free(l, x, y, t):
@@ -182,14 +185,23 @@ class fem_mgpcg:
         # Use Garlekin coarsening: K[l+1] = R[l] @ K[l] @ I[l], where R = transpose(I)
         for i, j in ti.ndrange(n2, n2):
             self.A[l][i, j] = 0.
-            for t in range(n1):
-                if self.Itp_mask[l - 1][t, i] == 1:
-                    s = 0.
-                    for m in range(n1):
-                        if self.Itp_mask[l - 1][m, j] == 1:
-                            s += self.A[l - 1][t, m] * self.Itp[l - 1][m, j]
-                    s = s * self.Itp[l - 1][t, i]
-                    self.A[l][i, j] += s
+            # for t in range(n1):
+            #     if self.Itp_mask[l - 1][t, i] == 1:
+            #         s = 0.
+            #         for m in range(n1):
+            #             if self.Itp_mask[l - 1][m, j] == 1:
+            #                 s += self.A[l - 1][t, m] * self.Itp[l - 1][m, j]
+            #         s = s * self.Itp[l - 1][t, i]
+            #         self.A[l][i, j] += s
+
+        for I in ti.grouped(self.Itp[l-1]):
+            i, j = I[0], I[1]
+            if self.Itp_mask[l - 1][i, j] == 1:
+                for t in range(self.Itp_mask[l - 1].shape[0]):
+                    for m in range(self.Itp_mask[l - 1].shape[1]):
+                        if self.Itp_mask[l - 1][t, m] == 1:
+                            self.A[l][j, m] += self.Itp[l - 1][i, j] * self.A[l-1][i, t] * self.Itp[l-1][t, m]
+                            # self.A[l][j, m] = ti.atomic_add(self.A[l][j, m], self.Itp[l - 1][i, j] * self.A[l-1][i, t] * self.Itp[l-1][t, m])
 
     @ti.kernel
     def set_A0(self, K: ti.template()):
@@ -285,7 +297,7 @@ class fem_mgpcg:
 
         for i in range(self.ndof):
             for j in range(self.ndof):
-                self.Ap[i] += self.A[0][i, j] * self.p[j]
+                self.Ap[i] += self.A[0][i, j] * self.p[j] # FIXME: performance bottle neck
 
     @ti.kernel
     def reduce(self, r1: ti.template(), r2: ti.template()):

@@ -2,14 +2,14 @@ import taichi as ti
 import numpy as np
 from solver import fem_mgpcg
 
-# ti.init(ti.cpu, kernel_profiler=True)
-ti.init(ti.cpu)
+ti.init(ti.cpu, kernel_profiler=True, excepthook=True, default_fp=ti.f64)
+# ti.init(ti.cpu, default_fp=ti.f64)
 
 gui_y = 500
 gui_x = 2 * gui_y
 display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 
-nely = 20
+nely = 30
 nelx = 2 * nely
 n_node = (nelx+1) * (nely+1)
 ndof = 2 * n_node
@@ -147,7 +147,7 @@ if __name__ == '__main__':
     get_Ke()
     assemble_K()
     solver = fem_mgpcg(nelx=nelx, nely=nely, fixed_dofs=fixed_dofs_vec,
-                       K=K, F=F, use_multigrid=True, dtype=ti.f64)
+                       K=K, F=F, use_multigrid=False, dtype=ti.f64)
 
     change = 1.
     # solver.solve(U, verbose=False)
@@ -163,7 +163,7 @@ if __name__ == '__main__':
         while change > 0.01:
             iter += 1
 
-            solver.solve(U, max_iters=ndof + 100, verbose=False)
+            solver.solve(U, max_iters=ndof + 100, verbose=True)
             get_dc()
             derivative_filter()
             x = OC()
@@ -184,7 +184,7 @@ if __name__ == '__main__':
             gui.set_image(display)
             gui.show()
 
-            # ti.print_kernel_profile_info()
+            ti.print_kernel_profile_info()
 
 
 
