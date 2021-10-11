@@ -8,11 +8,15 @@ class Model:
 
         self.nodes = nodes
         self.elements = elements
-        self.loads = loads
-        self.supports = supports
         self.dim = nodes[0].dim
+        self.E = elements[0].E
+        self.nu = elements[0].nu
+        self.rho = elements[0].rho
         self.init_index()
         self.cal_connected_nodes()
+        self.loads = {}
+        self.supports = {}
+        self.apply_loads_BCs()
 
     # Initilize node ID and element ID
     def init_index(self):
@@ -23,6 +27,14 @@ class Model:
             self.elements[i].ID = i
             for nd in self.elements[i].nodes:
                 self.elements[i].cont_nds.append(nd.ID)
+
+    def apply_loads_BCs(self):
+        for nd in self.nodes:
+            if nd.force != []:
+                self.loads[nd.ID] = nd.force
+            if nd.disp != []:
+                self.supports[nd.ID] = nd.disp
+
 
     # Find the connected nodes of each element
     def cal_connected_nodes(self):
@@ -53,7 +65,10 @@ if __name__ == '__main__':
     nd2 = Node(1., 0.)
     nd3 = Node(1., 1.)
     nd4 = Node(2., 1.)
-    nodes = [nd0,nd1,nd2,nd3]
+    nodes = [nd0, nd1, nd2, nd3, nd4]
+
+    nd4.set_force([-1,0])
+    nd2.set_disp([0, 0])
 
     ele0 = Triangle([nd0, nd1, nd2])
     ele1 = Triangle([nd1, nd2, nd3])
@@ -70,3 +85,5 @@ if __name__ == '__main__':
     print(model.nodes[3].ID)
     print(model.elements[0].nodes[0].adj_nds)
     print(model.elements[1].adj_elems)
+    print(model.loads)
+    print(model.supports)

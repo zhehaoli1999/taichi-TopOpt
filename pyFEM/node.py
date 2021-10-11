@@ -41,7 +41,8 @@ class Node(object):
             if self.dim == 2:
                 self.x = pos[0][0] * 1.
                 self.y = pos[0][1] * 1.
-                self.pos = (self.x, self.y)
+                self.z = 0.0
+                self.pos = (self.x, self.y, self.z)
             elif self.dim == 3:
                 self.x = pos[0][0] * 1.
                 self.y = pos[0][1] * 1.
@@ -55,7 +56,8 @@ class Node(object):
             self.dim = 2
             self.x = pos[0] * 1.
             self.y = pos[1] * 1.
-            self.pos = (self.x, self.y)
+            self.z = 0.0
+            self.pos = (self.x, self.y, self.z)
         elif len(pos) == 3:
             self.pos = tuple(pos)
             self.dim = 3
@@ -76,6 +78,7 @@ class Node(object):
 
     def set_force(self, *forces):
         for force in forces:
+            assert len(force) == self.dim, "The dimension must be the same."
             self.force += force
 
     def clear_force(self):
@@ -83,10 +86,11 @@ class Node(object):
 
     def set_disp(self, *disps):
         for disp in disps:
+            assert len(disp) == self.dim, "The dimension must be the same."
             self.disp += disp
 
     def clear_disp(self):
-        self.force = []
+        self.disp = []
 
 
 if __name__ == '__main__':

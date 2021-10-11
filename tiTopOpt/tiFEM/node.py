@@ -15,8 +15,8 @@ class Node(object):
         self.ID = None  # index
         self.force = ti.Vector([0., 0., 0.]) # force vector
         self.disp = ti.Vector([0., 0., 0.]) # displacement vector
-        self.cont_elems = ti.field(ti.i32, shape=[]) # connected elements
-        self.adj_nds = ti.field(ti.i32, shape=[]) # adjacent nodes
+        self.cont_elems = [] # connected elements
+        self.adj_nds = [] # adjacent nodes
 
     def __repr__(self):
         return "Node: %r" % (self.pos,)

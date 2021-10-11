@@ -5,8 +5,8 @@ from init import *
 class integration:
     def __init__(self, num):
         self.num = 3  # number of sample points (0-4)
-        self.Xi = ti.field(ti.f64, shape=(num+1))  # roots of the nth Legendre polynomial
-        self.w = ti.field(ti.f64, shape=(num+1)) # Quadrature weights
+        self.Xi = ti.field(ti.f64, (num+1))  # roots of the nth Legendre polynomial
+        self.w = ti.field(ti.f64, (num+1)) # Quadrature weights
 
         if num == 0:
             self.Xi[0] = 0.

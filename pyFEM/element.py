@@ -15,6 +15,7 @@ class Element:
         self.ID = None  # index
         self.E = E  # Young's modulus
         self.nu = nu  # Possion's ratio
+        self.rho = 1.0
         self.volume = None  # volume
 
         self.ndof = len(nodes) * self.dim
@@ -39,6 +40,7 @@ class Triangle(Element):
         self.B = []
         self.Ke = []
         self.calc_volume()
+        self.type_abaqus = "SHELL"
 
     def calc_volume(self):
         v1 = np.array([self.nodes[0].x, self.nodes[0].y])-np.array([self.nodes[1].x, self.nodes[1].y])
@@ -83,6 +85,7 @@ class Quadrangle(Element):
         self.ndof = 2
         self.t = t
         self.Ke = np.zeros(shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
+        self.type_abaqus = "SHELL"
 
     def calc_D(self):
         a = self.E / (1 - self.nu ** 2)
@@ -157,6 +160,7 @@ class Tetrahedron(Element):
         self.nu = nu
         self.ndof = 3
         self.calc_volume()
+        self.type_abaqus = "SOLID"
 
     def calc_volume(self):
         V = np.ones((4,4))
@@ -214,6 +218,7 @@ class Hexahedron(Element):
         self.nu = nu
         self.ndof = 3
         self.Ke = np.zeros(shape=(len(nodes) * self.ndof, len(nodes) * self.ndof))
+        self.type_abaqus = "SOLID"
 
     def calc_D(self):
         a = self.E / ((1. + self.nu) * (1. - 2. * self.nu))
