@@ -1,0 +1,8 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "taichi-TopOpt"
+authors = [{name = "Albert Li", email = ""},{name = "Zhehaoli", email = "richardhall@mail.ustc.edu.cn"}]
+dynamic = ["version", "description"]
