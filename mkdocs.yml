@@ -1,0 +1,10 @@
+site_name: Taichi TopOpt
+
+theme:
+    name: readthedocs
+
+nav:
+- API:
+  - 'APIs': 'docs/api/api.md'
+  - 'Examples': 'docs/examples/example.md'
+
