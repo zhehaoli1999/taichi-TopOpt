@@ -1,8 +1,10 @@
 # Taichi TopOpt 
 
+[![Documentation Status](https://readthedocs.org/projects/taichi-topopt/badge/?version=latest)](https://taichi-topopt.readthedocs.io/en/latest/?badge=latest)
+
 ### (Under Active Development)
-![result2d](./img/result2d.png)
 ![beso_cantilever](./img/video.gif)
+<!-- ![result2d](./img/result2d.png) -->
 ## Intro
 A topology optimization framework written in Taichi programming language, which is embedded in Python.
 ## Requirement 
