@@ -5,7 +5,6 @@ class Node(object):
     def __init__(self, *pos):
         self.init_pos(*pos)  # position
         self.ID = None  # index
-        self.set_dof()  # set dofs
         self.force = []  # force vector
         self.disp = []  # displacement vector
         self.cont_elems = [] # connected elements
@@ -68,14 +67,6 @@ class Node(object):
         else:
             raise AttributeError("Node dimension must be 2 or 3")
 
-    def set_ID(self, var):
-        self.ID = var
-
-    def set_dof(self):
-        self.dofX = False
-        self.dofY = False
-        self.dofZ = False
-
     def set_force(self, *forces):
         for force in forces:
             assert len(force) == self.dim, "The dimension must be the same."
@@ -98,12 +89,9 @@ if __name__ == '__main__':
     print(nd)
     nd.set_force([3,4,5])
     print(nd.force)
-    nd.set_disp([0,1,0])
+    nd.set_disp([0.,1.,0.])
     print(nd.disp)
-    nd.set_ID(4)
+    nd.ID = 4
     print(nd.ID)
-    print(nd.dofX)
-    nd.y=2
+    nd.y = 2.
     print(nd)
-    nd2 = Node([2,3,0])
-    print(nd == nd2)
