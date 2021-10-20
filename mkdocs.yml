@@ -8,6 +8,7 @@ nav:
 - Roadmap: 'roadmap.md'
 - APIs:
   - 'APIs': 'api/api.md'
+  - 'Node Class': 'api/node.md'
 - Examples:
   - 'Example': 'examples/example.md'
 
