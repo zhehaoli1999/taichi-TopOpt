@@ -4,6 +4,7 @@ theme:
     name: readthedocs
 
 nav:
+- Home: 'index.md'
 - Roadmap: 'roadmap.md'
 - APIs:
   - 'APIs': 'api/api.md'
