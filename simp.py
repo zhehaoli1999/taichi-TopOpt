@@ -219,6 +219,7 @@ def initialize():
     for i in range(n_free_dof):
         F_freedof[i] = F[free_dofs_vec[i]]
 
+
 if __name__ == '__main__':
     # window = ti.ui.Window('Taichi TopoOpt', (nelx , nely))
     # while window.running:
@@ -229,7 +230,7 @@ if __name__ == '__main__':
     free_dofs_vec.from_numpy(free_dofs)
     initialize()
     get_Ke()
-
+    video_manager = ti.VideoManager(output_dir='./simp', framerate=2, automatic_build=False)
     # print(K_freedof)
     # print(U)
     # print(display)
@@ -259,10 +260,11 @@ if __name__ == '__main__':
 
             rho.from_numpy(x)
             display_sampling()
-
+            video_manager.write_frame(display)
             gui.set_image(display)
             gui.show()
 
             # ti.print_kernel_profile_info()
-
+    video_manager.make_video(gif=True)
+    gui.close()
 

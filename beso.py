@@ -14,18 +14,19 @@ display = ti.field(ti.f64, shape=(gui_x, gui_y)) # field for display
 # Model parameters
 nely = 50
 nelx = 80
-n_node = (nelx+1) * (nely+1)
-ndof = 2 * n_node
+n_node = (nelx+1) * (nely+1) # number of nodes
+ndof = 2 * n_node # nodal degree-of-freedom
 
-# FEM variables
+# Define K, F, U, Ke
 K = ti.field(ti.f64, shape=(ndof, ndof))
 F = ti.field(ti.f64, shape=(ndof))
 U = ti.field(ti.f64, shape=(ndof))
 Ke = ti.field(ti.f64, shape=(8,8))
 
-fixed_dofs = list(range(0, 2 * (nely + 1)))
+# Define boundary conditions
+fixed_dofs = list(range(0, 2 * (nely + 1))) # fixed dof
 all_dofs = list(range(0, 2 * (nelx + 1) * (nely + 1)))
-free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs)))
+free_dofs = np.array(list(set(all_dofs) - set(fixed_dofs))) # free dof
 n_free_dof = len(free_dofs)
 
 free_dofs_vec = ti.field(ti.i32, shape=n_free_dof)
@@ -34,13 +35,13 @@ F_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 U_freedof = ti.field(dtype=ti.f64, shape=(n_free_dof))
 
 # BESO parameters
-E = 1.
-nu = 0.3
-rmin = 4
-volfrac = 0.5 # volume limit
-penalty = 3
-xmin = 1e-3
-ert = 0.02
+E = 1. # Young modulus
+nu = 0.3 # Possion's rate
+rmin = 4 # Filter radius
+volfrac = 0.5 # Volume fraction
+ert = 0.02 # Evolutionary rate
+penalty = 3 # Penalty
+xmin = 1e-3 # minimal design variable
 
 # BESO variables
 xe = ti.field(ti.f64, shape=(nely, nelx))
@@ -51,6 +52,7 @@ dc_old = ti.field(ti.f64, shape=(nely, nelx))  # derivative of compliance
 
 def examples(case=0):
     if  case == 0:
+        # Define load vector
         F[2*(nelx+1)*(nely+1)-nely-1] = -1.
     if case == 1:
         F[2*nelx*(nely+1)-1] = -1.
@@ -62,28 +64,21 @@ def initialize():
     for I in ti.grouped(xe):
         xe[I] = 1
 
-    # 2. set boundary condition
     for i in range(n_free_dof):
         F_freedof[i] = F[free_dofs_vec[i]]
 
 
 @ti.kernel
 def display_sampling():
-    s_x = int(gui_x / nelx)
-    s_y = int(gui_y / nely)
+    s_x = gui_x / nelx
+    s_y = gui_y / nely
     for i, j in ti.ndrange(gui_x, gui_y):
         elx = i // s_x
         ely = j // s_y
         display[i, gui_y - j] = 1. - xe[ely, elx] # Note:  transpose rho here
 
 
-@ti.func
-def clamp(x: ti.template(), ely, elx):
-    return x[ely, elx] if 0 <= ely < nely and 0 <= elx < nelx else 0.
-
-
-def filt(x, dc):
-    nely, nelx = x.shape
+def filt(dc):
     rminf = math.floor(rmin)
     dcf = np.zeros((nely, nelx))
 
@@ -97,6 +92,18 @@ def filt(x, dc):
                     dcf[j, i] = dcf[j, i] + max(0., fac) * dc[l, k]
             dcf[j, i] = dcf[j, i] / sum_
     return dcf
+
+
+# @ti.kernel
+# def filtering():
+#     for i,j in ti.ndrange(nelx, nely):
+#         sum_ = 0.
+#         for k in range(max(i - ti.floor(rmin), 0), min(i + ti.floor(rmin) + 1, nelx)):
+#             for l in range(max(j - ti.floor(rmin), 0), min(j + ti.floor(rmin) + 1, nely)):
+#                 fac = rmin - ti.sqrt((i - k) ** 2. + (j - l) ** 2.)
+#                 sum_ += max(0., fac)
+#                 dc_flt[j, i] = dc[j,i] + max(0., fac) * dc[l, k]
+#         dc_flt[j, i] /= sum_
 
 
 @ti.kernel
@@ -132,6 +139,7 @@ def backward_map_u():
         U[idx] = U_freedof[i]
 
 
+# Get elemental stiffness matrix
 def get_ke():
     k = np.array(
         [1 / 2 - nu / 6, 1 / 8 + nu / 8, -1 / 4 - nu / 12, -1 / 8 + 3 * nu / 8, -1 / 4 + nu / 12, -1 / 8 - nu / 8,
@@ -177,8 +185,8 @@ def solver():
 
 def beso(crtvol):
     dc_np = dc.to_numpy()
-    l1 = 0 # dc_np.min()
-    l2 = 1e5 # dc_np.max()
+    l1 = dc_np.min()
+    l2 = dc_np.max()
     tarvol = crtvol * nely * nelx
     x = xe.to_numpy()
     while l2 - l1 > 1e-5:
@@ -195,7 +203,7 @@ def beso(crtvol):
 
 if __name__ == '__main__':
     gui = ti.GUI('Taichi TopOpt', res=(gui_x, gui_y))
-    video_manager = ti.VideoManager(output_dir='./img', framerate=2, automatic_build=False)
+    video_manager = ti.VideoManager(output_dir='./beso', framerate=2, automatic_build=False)
 
     examples(0)
     free_dofs_vec.from_numpy(free_dofs)
@@ -205,28 +213,26 @@ if __name__ == '__main__':
     volume = 1.
     history_C = []
     while gui.running:
-        x_old = xe.to_numpy()
         iter = 0
         while change > 1e-3:
             iter += 1
             compliance[None] = 0.
-            dc_old = dc
+            if iter > 1: dc_old = dc #dc_old.copy_from(dc)
             volume = max(volfrac, volume * (1-ert))
             assemble_k()
             solver()
             backward_map_u()
             get_dc()
-            dc.from_numpy(filt(x_old, dc.to_numpy()))
+            dc.from_numpy(filt(dc.to_numpy()))
             if iter > 1: averaging_dc()
             history_C.append(compliance[None])
             x = beso(volume)
+            xe.from_numpy(x)
 
             # check convergence
             if iter > 10:
                 change = abs((sum(history_C[iter - 5:iter]) - sum(history_C[iter - 10:iter - 5])) / sum(history_C[iter - 5:iter]))
 
-            x_old = x
-            xe.from_numpy(x)
             display_sampling()
             video_manager.write_frame(display)
             print(f"iter: {iter}, volume = {volume}, compliance = {compliance[None]}, change = {change}")

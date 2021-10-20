@@ -1,5 +1,5 @@
-from node import *
-from integration import *
+from pyFEM.node import *
+from pyFEM.integration import *
 
 
 # ====== element base ======

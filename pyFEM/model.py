@@ -35,7 +35,6 @@ class Model:
             if nd.disp != []:
                 self.supports[nd.ID] = nd.disp
 
-
     # Find the connected nodes of each element
     def cal_connected_nodes(self):
         for elem in self.elements:
@@ -78,7 +77,7 @@ if __name__ == '__main__':
     loads = []
     supports = []
 
-    model = Model(nodes,elems, loads, supports)
+    model = Model(nodes, elems, loads, supports)
     model.cal_adjacent_nodes()
     model.cal_adjacent_elements()
     print(model.elements[0].cont_nds)
