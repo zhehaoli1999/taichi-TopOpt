@@ -3,6 +3,9 @@ site_name: Taichi TopOpt
 theme:
     name: readthedocs
 
+markdown_extensions:
+  - admonition
+
 nav:
 - Home: 'index.md'
 - Roadmap: 'roadmap.md'
