@@ -1,5 +1,5 @@
-from pyFEM.node import *
-from pyFEM.integration import *
+from node import *
+from integration import *
 
 
 # ====== element base ======
@@ -141,7 +141,6 @@ class Quadrangle(Element):
 
     def calc_Ke(self):
         self.calc_D()
-
         glq = integration(2) # 2 sample points
         for i in range(len(glq.Xi)):
             for j in range(len(glq.Xi)):
@@ -297,30 +296,30 @@ class Hexahedron(Element):
 
 
 if __name__ == '__main__':
-    # ===== Triangle =====
-    tri_0 = Node(0., 0., 0.)
-    tri_1 = Node(1., 0., 0.)
-    tri_2 = Node(1., 1., 0.)
-    tri_ele = Triangle([tri_0, tri_1, tri_2])
-    print(tri_ele.nodes)
-    print(tri_ele.ndof)
-    tri_ele.calc_D()
-    print(tri_ele.D)
-    tri_ele.calc_Ke()
-    print(tri_ele.Ke)
-
-    # ===== Quadrangle =====
-    quad_0 = Node(0., 0., 0.)
-    quad_1 = Node(1., 0., 0.)
-    quad_2 = Node(1., 1., 0.)
-    quad_3 = Node(1., 2., 0.)
-    quad_ele = Quadrangle([quad_0,quad_1,quad_2,quad_3])
-    print(quad_ele.nodes)
-    print(quad_ele.ndof)
-    quad_ele.calc_D()
-    print(quad_ele.D)
-    quad_ele.calc_Ke()
-    print(quad_ele.Ke)
+    # # ===== Triangle =====
+    # tri_0 = Node(0., 0., 0.)
+    # tri_1 = Node(1., 0., 0.)
+    # tri_2 = Node(1., 1., 0.)
+    # tri_ele = Triangle([tri_0, tri_1, tri_2])
+    # print(tri_ele.nodes)
+    # print(tri_ele.ndof)
+    # tri_ele.calc_D()
+    # print(tri_ele.D)
+    # tri_ele.calc_Ke()
+    # print(tri_ele.Ke)
+    #
+    # # ===== Quadrangle =====
+    # quad_0 = Node(0., 0., 0.)
+    # quad_1 = Node(1., 0., 0.)
+    # quad_2 = Node(1., 1., 0.)
+    # quad_3 = Node(1., 2., 0.)
+    # quad_ele = Quadrangle([quad_0,quad_1,quad_2,quad_3])
+    # print(quad_ele.nodes)
+    # print(quad_ele.ndof)
+    # quad_ele.calc_D()
+    # print(quad_ele.D)
+    # quad_ele.calc_Ke()
+    # print(quad_ele.Ke)
 
     # ===== Tetrahedron =====
     tet_0 = Node(0., 0., 0.)
@@ -328,6 +327,7 @@ if __name__ == '__main__':
     tet_2 = Node(1., 1., 0.)
     tet_3 = Node(1., 1., 1.)
     tet_ele = Tetrahedron([tet_0,tet_1,tet_2,tet_3])
+    print(tet_ele.volume)
     print(tet_ele.nodes)
     print(tet_ele.ndof)
     tet_ele.calc_D()
@@ -335,19 +335,19 @@ if __name__ == '__main__':
     tet_ele.calc_Ke()
     print(tet_ele.Ke)
 
-    # ===== hexahedron =====
-    hex_0 = Node(0.,0.,0.)
-    hex_1 = Node(1.,0.,0.)
-    hex_2 = Node(1.,1.,0.)
-    hex_3 = Node(0.,1.,0.)
-    hex_4 = Node(0.,0.,1.)
-    hex_5 = Node(1.,0.,1.)
-    hex_6 = Node(1.,1.,1.)
-    hex_7 = Node(0.,1.,1.)
-    hex_ele = Hexahedron([hex_0,hex_1,hex_2,hex_3,hex_4,hex_5,hex_6,hex_7])
-    print(hex_ele.nodes)
-    print(hex_ele.ndof)
-    hex_ele.calc_D()
-    print(hex_ele.D)
-    hex_ele.calc_Ke()
-    print(hex_ele.Ke)
+    # # ===== hexahedron =====
+    # hex_0 = Node(0.,0.,0.)
+    # hex_1 = Node(1.,0.,0.)
+    # hex_2 = Node(1.,1.,0.)
+    # hex_3 = Node(0.,1.,0.)
+    # hex_4 = Node(0.,0.,1.)
+    # hex_5 = Node(1.,0.,1.)
+    # hex_6 = Node(1.,1.,1.)
+    # hex_7 = Node(0.,1.,1.)
+    # hex_ele = Hexahedron([hex_0,hex_1,hex_2,hex_3,hex_4,hex_5,hex_6,hex_7])
+    # print(hex_ele.nodes)
+    # print(hex_ele.ndof)
+    # hex_ele.calc_D()
+    # print(hex_ele.D)
+    # hex_ele.calc_Ke()
+    # print(hex_ele.Ke)

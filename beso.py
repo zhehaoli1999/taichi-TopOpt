@@ -205,7 +205,7 @@ if __name__ == '__main__':
     gui = ti.GUI('Taichi TopOpt', res=(gui_x, gui_y))
     video_manager = ti.VideoManager(output_dir='./beso', framerate=2, automatic_build=False)
 
-    examples(0)
+    examples(1)
     free_dofs_vec.from_numpy(free_dofs)
     initialize()
     get_ke()

@@ -1,7 +1,8 @@
-from init import *
+import taichi as ti
 
 
 # Gauss-Legendre Quadrature
+@ti.data_oriented
 class integration:
     def __init__(self, num):
         self.num = 3  # number of sample points (0-4)
