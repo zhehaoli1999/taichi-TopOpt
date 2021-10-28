@@ -12,6 +12,7 @@ nav:
 - APIs:
   - 'APIs': 'api/api.md'
   - 'Node Class': 'api/node.md'
+  - 'Element Class': 'api/element.md'
 - Examples:
   - 'Example': 'examples/example.md'
 

@@ -16,7 +16,7 @@ class Node(object):
         else:
             raise AttributeError("Node dimension must be 2 or 3")
 
-        self.ID = None  # index
+        self.ID = -1  # index
         self.cont_elems = [] # connected elements
         self.adj_nds = [] # adjacent nodes
 
@@ -36,25 +36,28 @@ class Node(object):
         else:
             return False
 
+    @ti.func
     def clear_force(self):
         self.force = ti.Vector([0., 0., 0.])
 
+    @ti.func
     def clear_disp(self):
         self.disp = ti.Vector([0., 0., 0.])
 
 
 if __name__ == '__main__':
     ti.init()
-    nd = Node(2,3,4)
+    nd = Node(2.,3.,4.)
     print(nd)
-    nd.force=ti.Vector([3,4,5])
+    nd.force=ti.Vector([3.,4.,5.])
     print(nd.force)
-    nd.disp=ti.Vector([1,0,1])
+    nd.disp=ti.Vector([1.,0.,1.])
     print(nd.disp)
     nd.ID=4
     print(nd.ID)
     nd.pos[1]=2
     print(nd)
-    nd2 = Node(2,2,4)
-    print(nd2)
+    nd2 = Node(2.,2.,4.)
+    nd3 = Node(2., 3., 4.)
     print(nd == nd2)
+    print(nd == nd3)

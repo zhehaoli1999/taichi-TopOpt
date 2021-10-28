@@ -30,22 +30,22 @@ class Triangle(Element):
         self.nu = nu
         self.nd_len = 3
         self.ndof = 2
-        self.volume = self.calc_volume()
+        self.volume = self.calc_area()
         self.type_abaqus = "SHELL"
         self.Ke = ti.field(ti.f64, shape=(6, 6))
 
-    def calc_volume(self) -> ti.f64:
+    @ti.kernel
+    def calc_area(self) -> ti.f64:
         v1 = ti.Vector([self.nodes[0, 0], self.nodes[0, 1]])-ti.Vector([self.nodes[1, 0], self.nodes[1, 1]])
         v2 = ti.Vector([self.nodes[0, 0], self.nodes[0, 1]])-ti.Vector([self.nodes[2, 0], self.nodes[2, 1]])
         return v1.cross(v2) * 0.5
 
-    def calc_D(self):
+    def calc_Ke(self):
         a = self.E / (1 - self.nu ** 2)
-        self.D = a * ti.Matrix([[1., self.nu, 0.],
-                          [self.nu, 1., 0.],
-                          [0., 0., (1 - self.nu) / 2.]])
+        D = a * ti.Matrix([[1., self.nu, 0.],
+                                [self.nu, 1., 0.],
+                                [0., 0., (1 - self.nu) / 2.]])
 
-    def calc_B(self):
         x1, y1 = self.nodes[0, 0], self.nodes[0, 1]
         x2, y2 = self.nodes[1, 0], self.nodes[1, 1]
         x3, y3 = self.nodes[2, 0], self.nodes[2, 1]
@@ -56,14 +56,11 @@ class Triangle(Element):
         gama2 = x1 - x3
         gama3 = x2 - x1
 
-        self.B = 1. / (2. * self.volume) * ti.Matrix([[belta1, 0, belta2, 0, belta3, 0],
+        B = 1. / (2. * self.volume) * ti.Matrix([[belta1, 0, belta2, 0, belta3, 0],
                                             [0., gama1, 0, gama2, 0, gama3],
                                             [gama1, belta1, gama2, belta2, gama3, belta3]])
 
-    def calc_Ke(self):
-        self.calc_B()
-        self.calc_D()
-        self.Ke = self.volume * self.B.transpose() @ self.D @ self.B
+        self.Ke = self.volume * B.transpose() @ D @ B
 
 
 @ti.data_oriented
@@ -79,15 +76,15 @@ class Quadrangle(Element):
         self.t = t
         self.type_abaqus = "SHELL"
         self.Ke = ti.field(ti.f64, (8, 8))
-        self.integration = integration(2)  # 2 sample points
-        self.D = self.E / (1 - self.nu ** 2) * ti.Matrix([[1., self.nu, 0.],
-                                                                             [self.nu, 1., 0.],
-                                                                             [0., 0., (1 - self.nu) / 2.]])
+        self.intv = integration(2)  # 2 sample points
 
     def calc_Ke(self):
-        for i, j in ti.ndrange(self.integration.num+1, self.integration.num+1):
-            s = self.integration.Xi[i]
-            t = self.integration.Xi[j]
+        D = self.E / (1 - self.nu ** 2) * ti.Matrix([[1., self.nu, 0.],
+                                                                             [self.nu, 1., 0.],
+                                                                             [0., 0., (1 - self.nu) / 2.]])
+        for i, j in ti.ndrange(self.intv.num+1, self.intv.num+1):
+            s = self.intv.Xi[i]
+            t = self.intv.Xi[j]
             x1, y1 = self.nodes[0, 0], self.nodes[0, 1]
             x2, y2 = self.nodes[1, 0], self.nodes[1, 1]
             x3, y3 = self.nodes[2, 0], self.nodes[2, 1]
@@ -128,10 +125,10 @@ class Quadrangle(Element):
                             [t - 1.0, 0.0, s + 1.0, -s - t],
                             [s - t, -s - 1.0, 0.0, t + 1.0],
                             [1.0 - s, s + t, -t - 1.0, 0.0]])
-            J = Y @ _J @ X / 8.
-            B = B.to_numpy() /  J[0,0]
+            J = -Y @ _J @ X / 8.
+            B = B.to_numpy() / J[0,0]
 
-            _Ke = self.integration.w[i] * self.integration.w[j] * self.t * B.transpose() @ self.D @ B * J[0,0]
+            _Ke = self.intv.w[i] * self.intv.w[j] * self.t * B.transpose() @ D @ B * J[0,0]
             for p,q in ti.ndrange(_Ke.shape[0], _Ke.shape[1]):
                 self.Ke[p,q] += _Ke[p,q]
 
@@ -160,47 +157,43 @@ class Tetrahedron(Element):
                         ])
         return ti.abs(V.determinant()/6.0)
 
-    def calc_D(self):
+    def calc_Ke(self):
         a = self.E / ((1. + self.nu) * (1. - 2. * self.nu))
         c1 = 1. - self.nu
         c2 = (1. - self.nu) / 2.
-        self.D = a * ti.Matrix([[c1, self.nu, self.nu, 0., 0., 0.],
+        D = a * ti.Matrix([[c1, self.nu, self.nu, 0., 0., 0.],
                           [self.nu, c1, self.nu, 0., 0., 0.],
                           [self.nu, self.nu, c1, 0., 0., 0.],
                           [0., 0., 0., c2, 0., 0.],
                           [0., 0., 0., 0., c2, 0.],
                           [0., 0., 0., 0., 0., c2]])
 
-    def calc_B(self):
-        belta = ti.Vector([0.,0.,0.,0.])
-        gama = ti.Vector([0.,0.,0.,0.])
-        delta = ti.Vector([0.,0.,0.,0.])
-        A = ti.Matrix([[1,1,1,1],
-                        [self.nodes[0, 0], self.nodes[1, 0], self.nodes[2, 0], self.nodes[3, 0]],
-                        [self.nodes[0, 1], self.nodes[1, 1], self.nodes[2, 1], self.nodes[3, 1]],
-                         [self.nodes[0, 2], self.nodes[1, 2], self.nodes[2, 2], self.nodes[3, 2]]
-                        ]).transpose()
+        belta = ti.Vector([0., 0., 0., 0.])
+        gama = ti.Vector([0., 0., 0., 0.])
+        delta = ti.Vector([0., 0., 0., 0.])
+        A = ti.Matrix([[1, 1, 1, 1],
+                       [self.nodes[0, 0], self.nodes[1, 0], self.nodes[2, 0], self.nodes[3, 0]],
+                       [self.nodes[0, 1], self.nodes[1, 1], self.nodes[2, 1], self.nodes[3, 1]],
+                       [self.nodes[0, 2], self.nodes[1, 2], self.nodes[2, 2], self.nodes[3, 2]]
+                       ]).transpose()
 
         for i in range(4):
             belta[i] = (-1.) ** (i + 1) * np.linalg.det(np.delete(np.delete(A, i, 0), 1, 1))
             gama[i] = (-1.) ** (i + 2) * np.linalg.det(np.delete(np.delete(A, i, 0), 2, 1))
             delta[i] = (-1.) ** (i + 1) * np.linalg.det(np.delete(np.delete(A, i, 0), 3, 1))
 
-        self.B = 1. / (6. * self.volume) * ti.Matrix([[belta[0], 0., 0., belta[1], 0., 0., belta[2], 0., 0., belta[3], 0., 0.],
-                                               [0., gama[0], 0., 0., gama[1], 0., 0., gama[2], 0., 0., gama[3], 0.],
-                                               [0., 0., delta[0], 0., 0., delta[1], 0., 0., delta[2], 0., 0., delta[3]],
-                                               [gama[0], belta[0], 0., gama[1], belta[1], 0., gama[2], belta[2], 0,
-                                                gama[3],
-                                                belta[3], 0.],
-                                               [0., delta[0], gama[0], 0., delta[1], gama[1], 0., delta[2], gama[2], 0.,
-                                                delta[3], gama[3]],
-                                               [delta[0], 0., belta[0], delta[1], 0., belta[1], delta[2], 0., belta[2],
-                                                delta[3], 0, belta[3]]])
-
-    def calc_Ke(self):
-        self.calc_B()
-        self.calc_D()
-        self.Ke = self.volume * self.B.transpose() @ self.D @ self.B
+        B = 1. / (6. * self.volume) * ti.Matrix(
+            [[belta[0], 0., 0., belta[1], 0., 0., belta[2], 0., 0., belta[3], 0., 0.],
+             [0., gama[0], 0., 0., gama[1], 0., 0., gama[2], 0., 0., gama[3], 0.],
+             [0., 0., delta[0], 0., 0., delta[1], 0., 0., delta[2], 0., 0., delta[3]],
+             [gama[0], belta[0], 0., gama[1], belta[1], 0., gama[2], belta[2], 0,
+              gama[3],
+              belta[3], 0.],
+             [0., delta[0], gama[0], 0., delta[1], gama[1], 0., delta[2], gama[2], 0.,
+              delta[3], gama[3]],
+             [delta[0], 0., belta[0], delta[1], 0., belta[1], delta[2], 0., belta[2],
+              delta[3], 0, belta[3]]])
+        self.Ke = self.volume * B.transpose() @ D @ B
 
 
 @ti.data_oriented
@@ -215,23 +208,24 @@ class Hexahedron(Element):
         self.ndof = 3
         self.Ke = ti.field(ti.f64, (24, 24))
         self.type_abaqus = "SOLID"
-        self.integration = integration(2)  # 2 sample points
+        self.intv = integration(2)  # 2 sample points
+
+
+    def calc_Ke(self):
         a = self.E / ((1. + self.nu) * (1. - 2. * self.nu))
         c1 = 1. - self.nu
         c2 = (1. - 2. * self.nu) * 0.5
-        self.D = a * ti.Matrix([[c1, self.nu, self.nu, 0., 0., 0.],
+        D = a * ti.Matrix([[c1, self.nu, self.nu, 0., 0., 0.],
                           [self.nu, c1, self.nu, 0., 0., 0.],
                           [self.nu, self.nu, c1, 0., 0., 0.],
                           [0., 0., 0., c2, 0., 0.],
                           [0., 0., 0., 0., c2, 0.],
                           [0., 0., 0., 0., 0., c2]])
-
-    def calc_Ke(self):
-        for i, j, k in ti.ndrange(self.integration.num + 1,
-                                  self.integration.num + 1, self.integration.num + 1):
-            s = self.integration.Xi[i]
-            t = self.integration.Xi[j]
-            u = self.integration.Xi[k]
+        for i, j, k in ti.ndrange(self.intv.num + 1,
+                                  self.intv.num + 1, self.intv.num + 1):
+            s = self.intv.Xi[i]
+            t = self.intv.Xi[j]
+            u = self.intv.Xi[k]
 
             x = ti.Vector([self.nodes[0, 0], self.nodes[1, 0], self.nodes[2, 0], self.nodes[3, 0],
                            self.nodes[4, 0], self.nodes[5, 0], self.nodes[6, 0], self.nodes[7, 0]])
@@ -289,7 +283,7 @@ class Hexahedron(Element):
                   0, Nz[6], Ny[6], 0, Nz[7], Ny[7]],
                  [Nz[0], 0, Nx[0], Nz[1], 0, Nx[1], Nz[2], 0, Nx[2], Nz[3], 0, Nx[3], Nz[4], 0, Nx[4], Nz[5], 0, Nx[5],
                   Nz[6], 0, Nx[6], Nz[7], 0, Nx[7]]])
-            _Ke = self.integration.w[i] * self.integration.w[j] * self.integration.w[k] * B.transpose() @ self.D @ B * J
+            _Ke = self.intv.w[i] * self.intv.w[j] * self.intv.w[k] * B.transpose() @ D @ B * J
             for p,q in ti.ndrange(_Ke.to_numpy().shape[0], _Ke.to_numpy().shape[1]):
                 self.Ke[p,q] += _Ke[p,q]
 
@@ -310,23 +304,19 @@ if __name__ == '__main__':
     # tri_ele = Triangle([tri_0, tri_1, tri_2])
     # print(tri_ele.nodes)
     # print(tri_ele.ndof)
-    # tri_ele.calc_D()
-    # print(tri_ele.D)
-    # tri_ele.calc_B()
-    # print(tri_ele.B)
     # tri_ele.calc_Ke()
     # print(tri_ele.Ke)
     #
-    # ===== Quadrangle =====
-    quad_0 = Node(0., 0., 0.)
-    quad_1 = Node(1., 0., 0.)
-    quad_2 = Node(1., 1., 0.)
-    quad_3 = Node(1., 2., 0.)
-    quad_ele = Quadrangle([quad_0,quad_1,quad_2,quad_3])
-    print(quad_ele.nodes)
-    print(quad_ele.ndof)
-    quad_ele.calc_Ke()
-    print(quad_ele.Ke)
+    # # ===== Quadrangle =====
+    # quad_0 = Node(0., 0., 0.)
+    # quad_1 = Node(1., 0., 0.)
+    # quad_2 = Node(1., 1., 0.)
+    # quad_3 = Node(1., 2., 0.)
+    # quad_ele = Quadrangle([quad_0,quad_1,quad_2,quad_3])
+    # print(quad_ele.nodes)
+    # print(quad_ele.ndof)
+    # quad_ele.calc_Ke()
+    # print(quad_ele.Ke)
 
     # # ===== Tetrahedron =====
     # tet_0 = Node(0., 0., 0.)
@@ -337,8 +327,6 @@ if __name__ == '__main__':
     # print(tet_ele.volume)
     # print(tet_ele.nodes)
     # print(tet_ele.ndof)
-    # tet_ele.calc_D()
-    # print(tet_ele.D)
     # tet_ele.calc_Ke()
     # print(tet_ele.Ke)
 
@@ -354,6 +342,5 @@ if __name__ == '__main__':
     hex_ele = Hexahedron([hex_0,hex_1,hex_2,hex_3,hex_4,hex_5,hex_6,hex_7])
     print(hex_ele.nodes)
     print(hex_ele.ndof)
-    print(hex_ele.D)
     hex_ele.calc_Ke()
     print(hex_ele.Ke)

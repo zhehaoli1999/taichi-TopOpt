@@ -314,12 +314,9 @@ if __name__ == '__main__':
     # quad_2 = Node(1., 1., 0.)
     # quad_3 = Node(1., 2., 0.)
     # quad_ele = Quadrangle([quad_0,quad_1,quad_2,quad_3])
-    # print(quad_ele.nodes)
-    # print(quad_ele.ndof)
-    # quad_ele.calc_D()
-    # print(quad_ele.D)
     # quad_ele.calc_Ke()
     # print(quad_ele.Ke)
+    # print(quad_ele.D)
 
     # ===== Tetrahedron =====
     tet_0 = Node(0., 0., 0.)

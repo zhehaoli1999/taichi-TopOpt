@@ -2,6 +2,8 @@
 
 Here are the classes, structs, unions and interfaces with brief descriptions:
 
+### Classes
+
 | Class name  | Description                                         |
 | ----------- | --------------------------------------------------- |
 | Node        | A class for implementing elemental nodes            |
